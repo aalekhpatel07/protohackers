@@ -1,8 +1,5 @@
 app = "protohackers-aalekhpatel07"
 
-[experimental]
-cmd = "./protohackers"
-
 [[services]]
     internal_port = 12000
     protocol = 'tcp'
