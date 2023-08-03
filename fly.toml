@@ -9,6 +9,6 @@ app = "protohackers-aalekhpatel07"
         port = 12000
     [[services.tcp_checks]]
         grace_period = "1s"
-        interval = "15s"
+        interval = "60s"
         restart_limit = 0
         timeout = "2s"
