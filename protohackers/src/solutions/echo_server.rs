@@ -43,7 +43,7 @@ impl EchoServer {
         let (mut read_half, mut write_half) = stream.into_split();
         info!("Accepted connection from {}", client_addr);
 
-        let mut buf = [0u8; 8];
+        let mut buf = [0u8; 1024];
 
         loop {
             let Ok(bytes_read) = read_half.read(&mut buf).await else {
@@ -77,6 +77,9 @@ impl EchoServer {
         }
 
         let mut stream = read_half.reunite(write_half).expect("failed to reunite.");
+        if let Err(err) = stream.flush().await {
+            error!("failed to flush stream for {}: {}", client_addr, err);
+        }
         if let Err(err) = stream.shutdown().await {
             error!("failed to shutdown stream: {}", err);
         } else {
