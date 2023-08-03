@@ -1,0 +1,10 @@
+[experimental]
+cmd = "./protohackers"
+
+[[services]]
+    internal_port = 12000
+    protocol = 'tcp'
+
+    [[services.ports]]
+        handlers = ['tcp']
+        port = 12000
