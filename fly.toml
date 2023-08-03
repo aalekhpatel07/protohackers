@@ -1,3 +1,5 @@
+app = "protohackers-aalekhpatel07"
+
 [experimental]
 cmd = "./protohackers"
 
