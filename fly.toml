@@ -1,14 +1,14 @@
 app = "protohackers-aalekhpatel07"
 
 [[services]]
-    internal_port = 12000
     protocol = 'tcp'
 
-    [[services.ports]]
-        handlers = ['tls']
-        port = 12000
-    [[services.tcp_checks]]
-        grace_period = "1s"
-        interval = "60s"
-        restart_limit = 0
-        timeout = "2s"
+[[services.ports]]
+    handlers = ['tls']
+    start_port = 12000
+    port = 12012
+[[services.tcp_checks]]
+    grace_period = "1s"
+    interval = "60s"
+    restart_limit = 0
+    timeout = "2s"
