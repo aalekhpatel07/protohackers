@@ -6,7 +6,7 @@ app = "protohackers-aalekhpatel07"
 [[services.ports]]
     handlers = ['tls']
     start_port = 12000
-    port = 12012
+    end_port = 12012
 # [[services.tcp_checks]]
 #     grace_period = "1s"
 #     interval = "60s"
