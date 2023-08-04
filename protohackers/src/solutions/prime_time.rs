@@ -51,7 +51,7 @@ impl PrimeTime {
     }
 
     pub fn is_prime(number: u64) -> bool {
-        debug!("Checking primality of {}", number);
+        let start_time = std::time::Instant::now();
         if matches!(number, 2 | 3 | 5 | 7 | 11) {
             return true;
         }
@@ -63,7 +63,8 @@ impl PrimeTime {
         let result = 
         (start..=end)
         .all(|divisor| number % divisor != 0);
-        debug!("Finished checking primality of {} (prime: {})", number, result);
+
+        trace!("Checked primality of {} (prime: {}) in {:#?}", number, result, start_time.elapsed());
 
         result
     }
