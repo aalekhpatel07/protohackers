@@ -98,13 +98,16 @@ impl PrimeTime {
 
             let mut current_offset = 0;
             loop {
-                if current_offset >= bytes_read {
-                    break;
-                }
-                let prev_contents = &buf[current_offset..bytes_read];
                 let mut buf_reader = BufReader::new(&buf[current_offset..bytes_read]);
-                match serde_json::from_reader::<_, data::IsPrimeRequest>(&mut buf_reader) {
-                    Ok(request) => {
+                let stream_reader = serde_json::Deserializer::from_reader(&mut buf_reader)
+                    .into_iter::<data::IsPrimeRequest>();
+
+                for request in 
+                    stream_reader
+                        .take_while(|result| result.is_ok())
+                        .map(Result::unwrap) 
+                    {
+                        current_offset += serde_json::to_vec(&request).unwrap().len() + 1; // account for the newline as well.
 
                         if &request.method != "isPrime" {
                             warn!("Method is not `isPrime`. Treating this as a malformed request...");
@@ -113,56 +116,84 @@ impl PrimeTime {
                             }
                             break 'conn;
                         }
-
-                        let size = serde_json::to_vec(&request).unwrap().len();
-                        current_offset += size;
-                        if current_offset < bytes_read {
-                            if buf[current_offset] == b'\n' {
-                                debug!("Found newline...");
-                                current_offset += 1;
-                            }
-                            else {
-                                warn!("Not newline terminated. Treating this as a malformed request... :sus:");
-                                if let Err(write_err) = write_half.write(&[1, 2, b'\n']).await {
-                                    error!("failed to send malformed response: {}", write_err);
-                                }
-                                break 'conn;
-                            }
-                        }
-
                         let is_prime = Self::is_prime_f64(request.number);
                         let response = data::IsPrimeResponse {
                             prime: is_prime,
                             method: "isPrime".to_string()
                         };
 
-                        let response_bytes = serde_json::to_vec(&response).unwrap();
+                        let mut response_bytes = serde_json::to_vec(&response).unwrap();
+                        response_bytes.push(b'\n');
+
                         if let Err(err) = write_half.write_all(&response_bytes).await {
-                            error!("Failed to write conforming response: {}", err);
+                            error!("failed to send conforming response: {}", err);
                         }
-                        if let Err(err) = write_half.write_all(&[b'\n']).await {
-                            error!("Failed to write newline: {}", err);
-                        }
-                    },
-                    Err(err) => {
-                        error!("Received unparseable data from client. Sending malformed data and terminating connection... {}", err);
-                        debug!(
-                            "current_offset={}, bytes_read={}\n contents={:?}",
-                            current_offset,
-                            bytes_read,
-                            String::from_utf8(prev_contents.to_vec())
-                        );
-                        if bytes_read == buf.len() {
-                            warn!("We filled the entire buffer up. Might be an incomplete frame?");
-                        }
-                        // Some random data, who cares, its malformed anyway.
-                        if let Err(write_err) = write_half.write(&[1, 2, b'\n']).await {
-                            error!("failed to send malformed response: {}", write_err);
-                        }
-                        break 'conn;
                     }
+                if current_offset >= bytes_read {
+                    break;
                 }
-            }
+            };
+                
+
+                // match serde_json::from_reader::<_, data::IsPrimeRequest>(&mut buf_reader) {
+                //     Ok(request) => {
+
+                //         if &request.method != "isPrime" {
+                //             warn!("Method is not `isPrime`. Treating this as a malformed request...");
+                //             if let Err(write_err) = write_half.write(&[1, 2, b'\n']).await {
+                //                 error!("failed to send malformed response: {}", write_err);
+                //             }
+                //             break 'conn;
+                //         }
+
+                //         let size = serde_json::to_vec(&request).unwrap().len();
+                //         current_offset += size;
+                //         if current_offset < bytes_read {
+                //             if buf[current_offset] == b'\n' {
+                //                 debug!("Found newline...");
+                //                 current_offset += 1;
+                //             }
+                //             else {
+                //                 warn!("Not newline terminated. Treating this as a malformed request... :sus:");
+                //                 if let Err(write_err) = write_half.write(&[1, 2, b'\n']).await {
+                //                     error!("failed to send malformed response: {}", write_err);
+                //                 }
+                //                 break 'conn;
+                //             }
+                //         }
+
+                //         let is_prime = Self::is_prime_f64(request.number);
+                //         let response = data::IsPrimeResponse {
+                //             prime: is_prime,
+                //             method: "isPrime".to_string()
+                //         };
+
+                //         let response_bytes = serde_json::to_vec(&response).unwrap();
+                //         if let Err(err) = write_half.write_all(&response_bytes).await {
+                //             error!("Failed to write conforming response: {}", err);
+                //         }
+                //         if let Err(err) = write_half.write_all(&[b'\n']).await {
+                //             error!("Failed to write newline: {}", err);
+                //         }
+                //     },
+                //     Err(err) => {
+                //         error!("Received unparseable data from client. Sending malformed data and terminating connection... {}", err);
+                //         debug!(
+                //             "current_offset={}, bytes_read={}\n contents={:?}",
+                //             current_offset,
+                //             bytes_read,
+                //             String::from_utf8(prev_contents.to_vec())
+                //         );
+                //         if bytes_read == buf.len() {
+                //             warn!("We filled the entire buffer up. Might be an incomplete frame?");
+                //         }
+                //         // Some random data, who cares, its malformed anyway.
+                //         if let Err(write_err) = write_half.write(&[1, 2, b'\n']).await {
+                //             error!("failed to send malformed response: {}", write_err);
+                //         }
+                //         break 'conn;
+                //     }
+                // }
         }
 
         let mut stream = read_half.reunite(write_half).expect("failed to reunite.");
