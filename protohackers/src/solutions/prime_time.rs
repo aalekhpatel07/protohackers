@@ -1,5 +1,5 @@
 use std::net::SocketAddr;
-use tracing::{info, error, warn, trace};
+use tracing::{info, error, warn, trace, debug};
 
 use tokio::{net::{TcpListener, TcpStream}, io::{AsyncReadExt, AsyncWriteExt}};
 use std::io::BufReader;
@@ -101,6 +101,7 @@ impl PrimeTime {
                 if current_offset >= bytes_read {
                     break;
                 }
+                let prev_contents = &buf[current_offset..bytes_read];
                 let mut buf_reader = BufReader::new(&buf[current_offset..bytes_read]);
                 match serde_json::from_reader::<_, data::IsPrimeRequest>(&mut buf_reader) {
                     Ok(request) => {
@@ -117,6 +118,7 @@ impl PrimeTime {
                         current_offset += size;
                         if current_offset < bytes_read {
                             if buf[current_offset] == b'\n' {
+                                debug!("Found newline...");
                                 current_offset += 1;
                             }
                             else {
@@ -144,6 +146,12 @@ impl PrimeTime {
                     },
                     Err(err) => {
                         error!("Received unparseable data from client. Sending malformed data and terminating connection... {}", err);
+                        debug!(
+                            "current_offset={}, bytes_read={}\n contents={:?}",
+                            current_offset,
+                            bytes_read,
+                            String::from_utf8(prev_contents.to_vec())
+                        );
                         if bytes_read == buf.len() {
                             warn!("We filled the entire buffer up. Might be an incomplete frame?");
                         }
