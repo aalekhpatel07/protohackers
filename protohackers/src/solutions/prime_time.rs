@@ -23,7 +23,6 @@ pub mod data {
         pub method: String,
         pub prime: bool
     }
-
 }
 
 
@@ -52,6 +51,9 @@ impl PrimeTime {
     }
 
     pub fn is_prime(number: u64) -> bool {
+        if matches!(number, 2 | 3 | 5 | 7 | 11) {
+            return true;
+        }
         let start = 2;
         let end = ((number as f64).sqrt().ceil() + 1.0) as u64;
         (start..=end)
