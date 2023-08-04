@@ -102,7 +102,7 @@ impl PrimeTime {
 
                         if &request.method != "isPrime" {
                             warn!("Method is not `isPrime`. Treating this as a malformed request...");
-                            if let Err(write_err) = write_half.write(&[1, 2]).await {
+                            if let Err(write_err) = write_half.write(&[1, 2, b'\n']).await {
                                 error!("failed to send malformed response: {}", write_err);
                             }
                             break 'conn;
@@ -116,7 +116,7 @@ impl PrimeTime {
                             }
                             else {
                                 warn!("Not newline terminated. Treating this as a malformed request... :sus:");
-                                if let Err(write_err) = write_half.write(&[1, 2]).await {
+                                if let Err(write_err) = write_half.write(&[1, 2, b'\n']).await {
                                     error!("failed to send malformed response: {}", write_err);
                                 }
                                 break 'conn;
@@ -133,6 +133,9 @@ impl PrimeTime {
                         if let Err(err) = write_half.write_all(&response_bytes).await {
                             error!("Failed to write conforming response: {}", err);
                         }
+                        if let Err(err) = write_half.write_all(&[b'\n']).await {
+                            error!("Failed to write newline: {}", err);
+                        }
                     },
                     Err(err) => {
                         error!("Received unparseable data from client. Sending malformed data and terminating connection... {}", err);
@@ -140,7 +143,7 @@ impl PrimeTime {
                             warn!("We filled the entire buffer up. Might be an incomplete frame?");
                         }
                         // Some random data, who cares, its malformed anyway.
-                        if let Err(write_err) = write_half.write(&[1, 2]).await {
+                        if let Err(write_err) = write_half.write(&[1, 2, b'\n']).await {
                             error!("failed to send malformed response: {}", write_err);
                         }
                         break 'conn;
