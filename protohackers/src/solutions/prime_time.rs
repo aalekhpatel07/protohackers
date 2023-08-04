@@ -51,6 +51,7 @@ impl PrimeTime {
     }
 
     pub fn is_prime(number: u64) -> bool {
+        debug!("Checking primality of {}", number);
         if matches!(number, 2 | 3 | 5 | 7 | 11) {
             return true;
         }
@@ -59,8 +60,12 @@ impl PrimeTime {
         }
         let start = 2;
         let end = ((number as f64).sqrt().ceil() + 1.0) as u64;
+        let result = 
         (start..=end)
-        .all(|divisor| number % divisor != 0)
+        .all(|divisor| number % divisor != 0);
+        debug!("Finished checking primality of {} (prime: {})", number, result);
+
+        result
     }
 
     pub async fn run(self) -> Result<(), Box<dyn std::error::Error>> {
@@ -107,6 +112,9 @@ impl PrimeTime {
                         .take_while(|result| result.is_ok())
                         .map(Result::unwrap) 
                     {
+                        if current_offset >= bytes_read {
+                            break;
+                        }
                         current_offset += serde_json::to_vec(&request).unwrap().len() + 1; // account for the newline as well.
 
                         if &request.method != "isPrime" {
@@ -116,7 +124,10 @@ impl PrimeTime {
                             }
                             break 'conn;
                         }
-                        let is_prime = Self::is_prime_f64(request.number);
+                        let is_prime = tokio::task::spawn_blocking(move || {
+                            Self::is_prime_f64(request.number)
+                        }).await.unwrap();
+
                         let response = data::IsPrimeResponse {
                             prime: is_prime,
                             method: "isPrime".to_string()
