@@ -54,6 +54,9 @@ impl PrimeTime {
         if matches!(number, 2 | 3 | 5 | 7 | 11) {
             return true;
         }
+        if matches!(number, 0 | 1 | 4 | 6 | 8 | 9 | 10) {
+            return false;
+        }
         let start = 2;
         let end = ((number as f64).sqrt().ceil() + 1.0) as u64;
         (start..=end)
