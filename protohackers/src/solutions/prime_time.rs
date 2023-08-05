@@ -1,53 +1,94 @@
-use std::net::SocketAddr;
-use tracing::{info, error, warn, trace, debug};
+use std::{net::SocketAddr, io::Cursor};
+use tracing::{info, error, warn, trace, debug, Level};
 
-use tokio::{net::{TcpListener, TcpStream}, io::{AsyncReadExt, AsyncWriteExt}};
-use std::io::BufReader;
+use tokio::{net::{TcpStream, TcpListener}, io::{AsyncReadExt, AsyncWriteExt}};
+use tokio::io::BufWriter;
+use bytes::{BytesMut, Buf};
+
+use self::data::IsPrimeResponse;
+
 
 
 #[derive(Debug)]
-pub struct PrimeTime {
-    pub port: u16,
-}
-
-pub mod data {
-
-    #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
-    pub struct IsPrimeRequest {
-        pub method: String,
-        pub number: f64
-    }
-
-    #[derive(Debug, serde::Serialize, Clone)]
-    pub struct IsPrimeResponse {
-        pub method: String,
-        pub prime: bool
-    }
+struct Connection {
+    stream: TcpStream,
+    buffer: BytesMut,
 }
 
 
-
-
-impl Default for PrimeTime {
-    fn default() -> Self {
+impl Connection {
+    pub fn new(stream: TcpStream) -> Self {
         Self {
-            port: 12001
+            stream,
+            buffer: BytesMut::with_capacity(4096)
         }
     }
+
+    pub async fn read_frame(&mut self) -> Result<Option<data::IsPrimeRequest>, PrimeTimeError> {
+        loop {
+            if let Ok(Some(frame)) = self.parse_frame() {
+                return Ok(Some(frame));
+            }
+
+            let bytes_read = self.stream.read_buf(&mut self.buffer).await?; 
+            trace!("Bytes read: {}, buffer: {:#?}", bytes_read, self.buffer);
+
+            if bytes_read == 0 {
+                if self.buffer.is_empty() {
+                    return Ok(None);
+                }
+                return Err(
+                    std::io::Error::new(
+                        std::io::ErrorKind::ConnectionReset, 
+                        "client sent some partial bytes that we couldn't make sense of and then reset the connection before sending a complete frame."
+                    ).into()
+                );
+            }
+        }
+    }
+
+    pub fn parse_frame(&mut self) -> Result<Option<data::IsPrimeRequest>, PrimeTimeError> {
+        let mut buf = Cursor::new(&self.buffer[..]);
+
+        match data::IsPrimeRequest::check(&mut buf) {
+            Ok(_) => {
+                let len = buf.position() as usize;
+                buf.set_position(0);
+                let frame = data::IsPrimeRequest::parse(&mut buf)?;
+                self.buffer.advance(len);
+                self.buffer.advance(1); // Skip the newline.
+                Ok(Some(frame))
+            },
+            Err(err) => {
+                Err(err.into())
+            }
+        }
+    }
+
+    pub async fn write_frame(&mut self, frame: Option<data::IsPrimeResponse>) -> std::io::Result<()> {
+        match frame {
+            Some(response) => {
+                let as_bytes = serde_json::to_vec(&response)?;
+                self.stream.write_all(&as_bytes).await?;
+            },
+            None => {
+                // Write buncha random corrupt data.
+                self.stream.write_all(&[1, 2]).await?;
+            }
+        }
+        self.stream.write(&[b'\n']).await?;
+        Ok(())
+    }
 }
 
-pub const TOLERANCE: f64 = 1e-16;
-
-impl PrimeTime {
-    pub fn loopback_addr(&self) -> SocketAddr {
-        ([0; 8], self.port).into()
-    }
+pub mod math {
+    pub const TOLERANCE: f64 = 1e-6;
 
     pub fn is_prime_f64(number: f64) -> bool {
         if (number.floor() - number).abs() > TOLERANCE {
             return false;
         }
-        Self::is_prime(number.floor() as u64)
+        is_prime(number.floor() as u64)
     }
 
     pub fn is_prime(number: u64) -> bool {
@@ -64,158 +105,124 @@ impl PrimeTime {
         (start..=end)
         .all(|divisor| number % divisor != 0);
 
-        trace!("Checked primality of {} (prime: {}) in {:#?}", number, result, start_time.elapsed());
+        tracing::trace!("Checked primality of {} (prime: {}) in {:#?}", number, result, start_time.elapsed());
 
         result
     }
+}
 
-    pub async fn run(self) -> Result<(), Box<dyn std::error::Error>> {
-        
-        let listener = TcpListener::bind(self.loopback_addr()).await?;
-        info!("PrimeTime listening on {}", self.loopback_addr());
 
+#[derive(Debug)]
+pub struct PrimeTime {
+    pub listener: TcpListener
+}
+
+#[derive(Debug)]
+struct Handler {
+    connection: Connection,
+    remote_addr: SocketAddr,
+}
+
+impl Handler {
+    pub async fn run(&mut self) -> Result<(), PrimeTimeError> {
+        let span = tracing::trace_span!("Connection", remote_addr=self.remote_addr.to_string());
         loop {
-            let (stream, addr) = listener.accept().await?;
-            tokio::task::spawn(async move {
-                Self::handle_connection(stream, addr).await;
+           if let Ok(Some(frame)) = self.connection.read_frame().await {
+                span.in_scope(|| {
+                    trace!(malformed = frame.is_malformed(), frame = ?frame);
+                });
+                if frame.is_malformed() {
+                    self.connection.write_frame(None).await?;
+                    self.connection.stream.flush().await?;
+                    self.connection.stream.shutdown().await?;
+                    break;
+                }
+                let prime_response = IsPrimeResponse {
+                    prime: math::is_prime_f64(frame.number),
+                    method: "isPrime".to_string()
+                };
+                span.in_scope(|| {
+                    trace!(request = ?frame, response = ?prime_response);
+                });
+                self.connection.write_frame(Some(prime_response)).await?;
+            }
+        }
+        debug!("Finished handling connection from {}", self.remote_addr);
+        Ok(())
+    }
+}
+
+impl PrimeTime {
+    pub fn new(listener: TcpListener) -> Self {
+        Self {
+            listener
+        }
+    }
+
+    pub async fn run(&mut self) -> Result<(), PrimeTimeError> {
+        info!("Accepting inbound connections at {:#?}.", self.listener.local_addr()?);
+        loop {
+            let (socket, remote_addr) = self.listener.accept().await?;
+            debug!("Accepted connection from {}", remote_addr);
+            let mut handler = Handler {
+                connection: Connection::new(socket),
+                remote_addr
+            };
+            tokio::spawn(async move {
+                if let Err(err) = handler.run().await {
+                    error!(cause =? err, "connection error");
+                }
             });
         }
     }
 
-    pub async fn handle_connection(
-        stream: TcpStream,
-        client_addr: SocketAddr,
-    ) {
-        let (mut read_half, mut write_half) = stream.into_split();
-        info!("Accepted connection from {}", client_addr);
+}
 
-        let mut buf = [0u8; 1024];
 
-        'conn: loop {
-            let Ok(bytes_read) = read_half.read(&mut buf).await else {
-                error!("Failed to read from read half");
-                break;
-            };
+#[derive(Debug, thiserror::Error)]
+pub enum PrimeTimeError {
+    #[error(transparent)]
+    IO(#[from] std::io::Error),
+    #[error("Received Malformed data: {0:#?}")]
+    Malformed(Vec<u8>),
+    #[error(transparent)]
+    Serde(#[from] serde_json::Error)
+}
 
-            if bytes_read == 0 {
-                trace!("Received EOF from client {}. Terminating connection.", client_addr);
-                break;
-            }
+pub mod data {
+    use std::io::Cursor;
+    use serde::Deserialize;
+    use tracing::trace;
 
-            let mut current_offset = 0;
-            loop {
-                let mut buf_reader = BufReader::new(&buf[current_offset..bytes_read]);
-                let stream_reader = serde_json::Deserializer::from_reader(&mut buf_reader)
-                    .into_iter::<data::IsPrimeRequest>();
+    use super::{PrimeTimeError, math::TOLERANCE};
 
-                for request in 
-                    stream_reader
-                        .take_while(|result| result.is_ok())
-                        .map(Result::unwrap) 
-                    {
-                        if current_offset >= bytes_read {
-                            break;
-                        }
-                        current_offset += serde_json::to_vec(&request).unwrap().len() + 1; // account for the newline as well.
 
-                        if &request.method != "isPrime" {
-                            warn!("Method is not `isPrime`. Treating this as a malformed request...");
-                            if let Err(write_err) = write_half.write(&[1, 2, b'\n']).await {
-                                error!("failed to send malformed response: {}", write_err);
-                            }
-                            break 'conn;
-                        }
-                        let is_prime = tokio::task::spawn_blocking(move || {
-                            Self::is_prime_f64(request.number)
-                        }).await.unwrap();
+    #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
+    pub struct IsPrimeRequest {
+        pub method: String,
+        pub number: f64
+    }
 
-                        let response = data::IsPrimeResponse {
-                            prime: is_prime,
-                            method: "isPrime".to_string()
-                        };
+    #[derive(Debug, serde::Serialize, Clone)]
+    pub struct IsPrimeResponse {
+        pub method: String,
+        pub prime: bool
+    }
 
-                        let mut response_bytes = serde_json::to_vec(&response).unwrap();
-                        response_bytes.push(b'\n');
-
-                        if let Err(err) = write_half.write_all(&response_bytes).await {
-                            error!("failed to send conforming response: {}", err);
-                        }
-                    }
-                if current_offset >= bytes_read {
-                    break;
-                }
-            };
-                
-
-                // match serde_json::from_reader::<_, data::IsPrimeRequest>(&mut buf_reader) {
-                //     Ok(request) => {
-
-                //         if &request.method != "isPrime" {
-                //             warn!("Method is not `isPrime`. Treating this as a malformed request...");
-                //             if let Err(write_err) = write_half.write(&[1, 2, b'\n']).await {
-                //                 error!("failed to send malformed response: {}", write_err);
-                //             }
-                //             break 'conn;
-                //         }
-
-                //         let size = serde_json::to_vec(&request).unwrap().len();
-                //         current_offset += size;
-                //         if current_offset < bytes_read {
-                //             if buf[current_offset] == b'\n' {
-                //                 debug!("Found newline...");
-                //                 current_offset += 1;
-                //             }
-                //             else {
-                //                 warn!("Not newline terminated. Treating this as a malformed request... :sus:");
-                //                 if let Err(write_err) = write_half.write(&[1, 2, b'\n']).await {
-                //                     error!("failed to send malformed response: {}", write_err);
-                //                 }
-                //                 break 'conn;
-                //             }
-                //         }
-
-                //         let is_prime = Self::is_prime_f64(request.number);
-                //         let response = data::IsPrimeResponse {
-                //             prime: is_prime,
-                //             method: "isPrime".to_string()
-                //         };
-
-                //         let response_bytes = serde_json::to_vec(&response).unwrap();
-                //         if let Err(err) = write_half.write_all(&response_bytes).await {
-                //             error!("Failed to write conforming response: {}", err);
-                //         }
-                //         if let Err(err) = write_half.write_all(&[b'\n']).await {
-                //             error!("Failed to write newline: {}", err);
-                //         }
-                //     },
-                //     Err(err) => {
-                //         error!("Received unparseable data from client. Sending malformed data and terminating connection... {}", err);
-                //         debug!(
-                //             "current_offset={}, bytes_read={}\n contents={:?}",
-                //             current_offset,
-                //             bytes_read,
-                //             String::from_utf8(prev_contents.to_vec())
-                //         );
-                //         if bytes_read == buf.len() {
-                //             warn!("We filled the entire buffer up. Might be an incomplete frame?");
-                //         }
-                //         // Some random data, who cares, its malformed anyway.
-                //         if let Err(write_err) = write_half.write(&[1, 2, b'\n']).await {
-                //             error!("failed to send malformed response: {}", write_err);
-                //         }
-                //         break 'conn;
-                //     }
-                // }
+    impl IsPrimeRequest {
+        pub fn check(buffer: &mut Cursor<&[u8]>) -> Result<(), PrimeTimeError> {
+            // trace!("Checking buffer: {:#?}", buffer);
+            let mut de = serde_json::Deserializer::from_reader(buffer);
+            Self::deserialize(&mut de)?;
+            Ok(())
         }
-
-        let mut stream = read_half.reunite(write_half).expect("failed to reunite.");
-        if let Err(err) = stream.flush().await {
-            error!("failed to flush stream for {}: {}", client_addr, err);
+        pub fn parse(buffer: &mut Cursor<&[u8]>) -> Result<Self, PrimeTimeError> {
+            let mut de = serde_json::Deserializer::from_reader(buffer);
+            let request = Self::deserialize(&mut de)?;
+            Ok(request)
         }
-        if let Err(err) = stream.shutdown().await {
-            error!("failed to shutdown stream: {}", err);
-        } else {
-            info!("Closed connection from {}", client_addr);
+        pub fn is_malformed(&self) -> bool {
+            self.method != "isPrime" || (self.number.floor() - self.number).abs() > TOLERANCE
         }
     }
 

@@ -1,7 +1,9 @@
 use clap::Parser;
 use protohackers::solutions::echo_server;
 use protohackers::solutions::prime_time;
+use tokio::net::TcpListener;
 use tracing::info;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 
 
@@ -21,14 +23,23 @@ pub async fn start_echo_server() {
     echo_server::EchoServer { port: 12000 }.run().await.unwrap();
 }
 pub async fn start_prime_time() {
-    prime_time::PrimeTime { port: 12001 }.run().await.unwrap();
+    let addr: std::net::SocketAddr = ([0; 8], 12001).into();
+    let listener = TcpListener::bind(&addr).await.unwrap();
+    prime_time::PrimeTime::new(listener).run().await.unwrap();
 }
 
 
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
+    tracing_subscriber::registry()
+    .with(
+        tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| "protohackers=trace,tokio=debug".into()),
+    )
+    .with(tracing_subscriber::fmt::layer())
+    .init();
+
     let args = Args::parse();
     info!("Args: {:#?}", args);
     match args.solution {
