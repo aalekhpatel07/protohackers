@@ -30,12 +30,13 @@ impl Connection {
                     return Ok(Some(frame));
                 },
                 Ok(None) => {
-                    trace!("data incomplete. waiting for more...");       
+                    trace!("Not enough data to parse. Waiting for more...");
                 },
                 Err(PrimeTimeError::Serde(serde_err)) => {
-                    if serde_err.is_data() || serde_err.is_syntax() {
-                        return Err(PrimeTimeError::Serde(serde_err));
-                    }
+                    // if serde_err.is_data() || serde_err.is_syntax() || serde_err.is_eof() {
+                    //     return Err(PrimeTimeError::Serde(serde_err));
+                    // }
+                    return Err(PrimeTimeError::Serde(serde_err));
                 },
                 _ => {}
             }
@@ -67,6 +68,9 @@ impl Connection {
 
     pub fn parse_frame(&mut self) -> Result<Option<data::IsPrimeRequest>, PrimeTimeError> {
         let mut buf = Cursor::new(&self.buffer[..]);
+        if self.buffer.is_empty() {
+            return Ok(None);
+        }
 
         match data::IsPrimeRequest::check(&mut buf) {
             Ok(_) => {
@@ -172,16 +176,16 @@ impl Handler {
                 Err(err) => {
                     match err {
                         PrimeTimeError::Serde(serde_err) => {
-                            if serde_err.is_data() || serde_err.is_syntax() {
-                                debug!(
-                                    err_data = serde_err.is_data(), 
-                                    err_syntax = serde_err.is_syntax(), 
-                                    "Will treat this as a malformed request. Found serde error: {}", 
-                                    serde_err
-                                );
-                                self.connection.write_frame(None).await?;
-                                break;
-                            }
+                            // if serde_err.is_data() || serde_err.is_syntax() || serde_err.is_eof() {
+                            debug!(
+                                err_data = serde_err.is_data(), 
+                                err_syntax = serde_err.is_syntax(), 
+                                "Will treat this as a malformed request. Found serde error: {}", 
+                                serde_err
+                            );
+                            self.connection.write_frame(None).await?;
+                            break;
+                            // }
                         },
                         _ => {
                             return Err(err);
