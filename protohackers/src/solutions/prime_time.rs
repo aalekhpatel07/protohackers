@@ -42,10 +42,12 @@ impl Connection {
                     if serde_err.is_data() || serde_err.is_syntax() {
                         return Err(PrimeTimeError::Serde(serde_err));
                     }
+                    if serde_err.is_eof() && !self.buffer.is_empty() {
+                        return Err(PrimeTimeError::Serde(serde_err));
+                    }
                 },
                 _ => {}
             }
-
             let bytes_read = self.stream.read_buf(&mut self.buffer).await?; 
             trace!("Bytes read: {}, buffer: {:#?}", bytes_read, self.buffer);
 
@@ -193,6 +195,10 @@ impl Handler {
                             });
 
                             if serde_err.is_data() || serde_err.is_syntax() {
+                                self.connection.write_frame(None).await?;
+                                break;
+                            }
+                            if serde_err.is_eof() && !self.connection.buffer.is_empty() {
                                 self.connection.write_frame(None).await?;
                                 break;
                             }
