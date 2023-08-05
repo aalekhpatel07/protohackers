@@ -2,7 +2,6 @@ use std::{net::SocketAddr, io::Cursor};
 use tracing::{info, error, warn, trace, debug, Level};
 
 use tokio::{net::{TcpStream, TcpListener}, io::{AsyncReadExt, AsyncWriteExt}};
-use tokio::io::BufWriter;
 use bytes::{BytesMut, Buf};
 
 use self::data::IsPrimeResponse;
@@ -26,8 +25,19 @@ impl Connection {
 
     pub async fn read_frame(&mut self) -> Result<Option<data::IsPrimeRequest>, PrimeTimeError> {
         loop {
-            if let Ok(Some(frame)) = self.parse_frame() {
-                return Ok(Some(frame));
+            match self.parse_frame() {
+                Ok(Some(frame)) => {
+                    return Ok(Some(frame));
+                },
+                Ok(None) => {
+                    trace!("data incomplete. waiting for more...");       
+                },
+                Err(PrimeTimeError::Serde(serde_err)) => {
+                    if serde_err.is_data() || serde_err.is_syntax() {
+                        return Err(PrimeTimeError::Serde(serde_err));
+                    }
+                },
+                _ => {}
             }
 
             let bytes_read = self.stream.read_buf(&mut self.buffer).await?; 
@@ -127,24 +137,49 @@ impl Handler {
     pub async fn run(&mut self) -> Result<(), PrimeTimeError> {
         let span = tracing::trace_span!("Connection", remote_addr=self.remote_addr.to_string());
         loop {
-           if let Ok(Some(frame)) = self.connection.read_frame().await {
-                span.in_scope(|| {
-                    trace!(malformed = frame.is_malformed(), frame = ?frame);
-                });
-                if frame.is_malformed() {
-                    self.connection.write_frame(None).await?;
-                    self.connection.stream.flush().await?;
-                    self.connection.stream.shutdown().await?;
-                    break;
+            match self.connection.read_frame().await {
+                Ok(Some(frame)) => {
+                    span.in_scope(|| {
+                        trace!(malformed = frame.is_malformed(), frame = ?frame);
+                    });
+                    if frame.is_malformed() {
+                        self.connection.write_frame(None).await?;
+                        self.connection.stream.flush().await?;
+                        self.connection.stream.shutdown().await?;
+                        break;
+                    }
+                    let prime_response = IsPrimeResponse {
+                        prime: math::is_prime_f64(frame.number),
+                        method: "isPrime".to_string()
+                    };
+                    span.in_scope(|| {
+                        trace!(request = ?frame, response = ?prime_response);
+                    });
+                    self.connection.write_frame(Some(prime_response)).await?;
+                    return Ok(());
+                },
+                Ok(None) => {
+                    debug!("No frame found... EOF?");
+                },
+                Err(err) => {
+                    match err {
+                        PrimeTimeError::Serde(serde_err) => {
+                            if serde_err.is_data() || serde_err.is_syntax() {
+                                debug!(
+                                    err_data = serde_err.is_data(), 
+                                    err_syntax = serde_err.is_syntax(), 
+                                    "Will treat this as a malformed request. Found serde error: {}", 
+                                    serde_err
+                                );
+                                self.connection.write_frame(None).await?;
+                                return Ok(());
+                            }
+                        },
+                        _ => {
+                            return Err(err);
+                        }
+                    }
                 }
-                let prime_response = IsPrimeResponse {
-                    prime: math::is_prime_f64(frame.number),
-                    method: "isPrime".to_string()
-                };
-                span.in_scope(|| {
-                    trace!(request = ?frame, response = ?prime_response);
-                });
-                self.connection.write_frame(Some(prime_response)).await?;
             }
         }
         debug!("Finished handling connection from {}", self.remote_addr);
