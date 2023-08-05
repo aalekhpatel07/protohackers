@@ -12,6 +12,7 @@ use self::data::IsPrimeResponse;
 struct Connection {
     stream: TcpStream,
     buffer: BytesMut,
+    received_eof: bool,
 }
 
 
@@ -19,7 +20,8 @@ impl Connection {
     pub fn new(stream: TcpStream) -> Self {
         Self {
             stream,
-            buffer: BytesMut::with_capacity(4096)
+            buffer: BytesMut::with_capacity(4096),
+            received_eof: false,
         }
     }
 
@@ -42,7 +44,7 @@ impl Connection {
                     if serde_err.is_data() || serde_err.is_syntax() {
                         return Err(PrimeTimeError::Serde(serde_err));
                     }
-                    if serde_err.is_eof() && !self.buffer.is_empty() {
+                    if serde_err.is_eof() && !self.buffer.is_empty() && self.received_eof {
                         return Err(PrimeTimeError::Serde(serde_err));
                     }
                 },
@@ -52,6 +54,7 @@ impl Connection {
             trace!("Bytes read: {}, buffer: {:#?}", bytes_read, self.buffer);
 
             if bytes_read == 0 {
+                self.received_eof = true;
                 if self.buffer.is_empty() {
                     return Ok(None);
                 }
@@ -198,7 +201,7 @@ impl Handler {
                                 self.connection.write_frame(None).await?;
                                 break;
                             }
-                            if serde_err.is_eof() && !self.connection.buffer.is_empty() {
+                            if serde_err.is_eof() && !self.connection.buffer.is_empty() && self.connection.received_eof {
                                 self.connection.write_frame(None).await?;
                                 break;
                             }
