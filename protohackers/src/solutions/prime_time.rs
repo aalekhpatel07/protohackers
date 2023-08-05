@@ -159,6 +159,7 @@ impl Handler {
                 },
                 Ok(None) => {
                     debug!("No frame found... EOF?");
+                    break;
                 },
                 Err(err) => {
                     match err {
