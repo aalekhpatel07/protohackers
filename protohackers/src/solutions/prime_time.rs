@@ -39,10 +39,9 @@ impl Connection {
                     span.in_scope(|| {
                         error!(category = ?serde_err.classify(), "Serde error: {}", serde_err);
                     });
-                    // if serde_err.is_data() || serde_err.is_syntax() || serde_err.is_eof() {
-                    //     return Err(PrimeTimeError::Serde(serde_err));
-                    // }
-                    return Err(PrimeTimeError::Serde(serde_err));
+                    if serde_err.is_data() || serde_err.is_syntax() {
+                        return Err(PrimeTimeError::Serde(serde_err));
+                    }
                 },
                 _ => {}
             }
@@ -186,16 +185,17 @@ impl Handler {
                         PrimeTimeError::Serde(serde_err) => {
                             span.in_scope(|| {
                                 debug!(
-                                    err_data = serde_err.is_data(), 
-                                    err_syntax = serde_err.is_syntax(), 
-                                    err_eof = serde_err.is_eof(),
+                                    err_category = ?serde_err.classify(),
                                     serde_err = ?serde_err,
                                     "Will treat this as a malformed request. Found serde error: {}", 
                                     serde_err
                                 );
                             });
-                            self.connection.write_frame(None).await?;
-                            break;
+
+                            if serde_err.is_data() || serde_err.is_syntax() {
+                                self.connection.write_frame(None).await?;
+                                break;
+                            }
                         },
                         _ => {
                             return Err(err);
