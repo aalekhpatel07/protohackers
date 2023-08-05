@@ -47,6 +47,14 @@ impl Connection {
                 if self.buffer.is_empty() {
                     return Ok(None);
                 }
+                // If there is still data buffered and we got an EOF, it probably means we couldn't convert it to 
+                // valid request. Just treat it as malformed request.
+                if let Err(err) = self.parse_frame() {
+                    warn!("We still had something buffered when we got an EOF and we couldn't parse it: {}", err);
+                    self.write_frame(None).await?;
+                    return Ok(None);
+                }
+
                 return Err(
                     std::io::Error::new(
                         std::io::ErrorKind::ConnectionReset, 
