@@ -24,15 +24,21 @@ impl Connection {
     }
 
     pub async fn read_frame(&mut self) -> Result<Option<data::IsPrimeRequest>, PrimeTimeError> {
+        let span = tracing::trace_span!("read_frame", ?self.buffer);
         loop {
             match self.parse_frame() {
                 Ok(Some(frame)) => {
                     return Ok(Some(frame));
                 },
                 Ok(None) => {
-                    trace!("Not enough data to parse. Waiting for more...");
+                    span.in_scope(|| {
+                        trace!("Not enough data to parse. Waiting for more...");
+                    });
                 },
                 Err(PrimeTimeError::Serde(serde_err)) => {
+                    span.in_scope(|| {
+                        error!(category = ?serde_err.classify(), "Serde error: {}", serde_err);
+                    });
                     // if serde_err.is_data() || serde_err.is_syntax() || serde_err.is_eof() {
                     //     return Err(PrimeTimeError::Serde(serde_err));
                     // }
@@ -127,7 +133,7 @@ pub mod math {
         (start..=end)
         .all(|divisor| number % divisor != 0);
 
-        tracing::trace!("Checked primality of {} (prime: {}) in {:#?}", number, result, start_time.elapsed());
+        // tracing::trace!("Checked primality of {} (prime: {}) in {:#?}", number, result, start_time.elapsed());
 
         result
     }
@@ -170,22 +176,26 @@ impl Handler {
                     self.connection.write_frame(Some(prime_response)).await?;
                 },
                 Ok(None) => {
-                    debug!("No frame found... EOF?");
+                    span.in_scope(|| {
+                        debug!("No frame found... EOF?");
+                    });
                     break;
                 },
                 Err(err) => {
                     match err {
                         PrimeTimeError::Serde(serde_err) => {
-                            // if serde_err.is_data() || serde_err.is_syntax() || serde_err.is_eof() {
-                            debug!(
-                                err_data = serde_err.is_data(), 
-                                err_syntax = serde_err.is_syntax(), 
-                                "Will treat this as a malformed request. Found serde error: {}", 
-                                serde_err
-                            );
+                            span.in_scope(|| {
+                                debug!(
+                                    err_data = serde_err.is_data(), 
+                                    err_syntax = serde_err.is_syntax(), 
+                                    err_eof = serde_err.is_eof(),
+                                    serde_err = ?serde_err,
+                                    "Will treat this as a malformed request. Found serde error: {}", 
+                                    serde_err
+                                );
+                            });
                             self.connection.write_frame(None).await?;
                             break;
-                            // }
                         },
                         _ => {
                             return Err(err);
@@ -239,7 +249,6 @@ pub enum PrimeTimeError {
 pub mod data {
     use std::io::Cursor;
     use serde::Deserialize;
-    use tracing::trace;
 
     use super::{PrimeTimeError, math::TOLERANCE};
 
