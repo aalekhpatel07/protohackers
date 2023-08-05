@@ -156,7 +156,6 @@ impl Handler {
                         trace!(request = ?frame, response = ?prime_response);
                     });
                     self.connection.write_frame(Some(prime_response)).await?;
-                    return Ok(());
                 },
                 Ok(None) => {
                     debug!("No frame found... EOF?");
@@ -172,7 +171,7 @@ impl Handler {
                                     serde_err
                                 );
                                 self.connection.write_frame(None).await?;
-                                return Ok(());
+                                break;
                             }
                         },
                         _ => {
