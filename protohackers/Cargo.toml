@@ -1,27 +1,12 @@
-[package]
-name = "protohackers"
-version = "0.1.0"
-edition = "2021"
-authors = ["Aalekh Patel <aalekh.gwpeck.7998@icloud.com>"]
-homepage = "https://github.com/aalekhpatel07/protohackers"
-repository = "https://github.com/aalekhpatel07/protohackers"
-documentation = "https://github.com/aalekhpatel07/protohackers"
-license-file = "LICENSE"
-description = "My solutions to TCP challenges from protohackers.com"
-readme = "README.md"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
-[dependencies]
-bytes = { version = "1.4.0", features = ["serde"] }
-clap = { version = "4.3.19", features = ["derive"] }
-serde = { version = "1.0.181", features = ["derive"] }
-serde_json = "1.0.104"
-thiserror = "1.0.44"
-tokio = { version = "1.29.1", features = ["full"] }
-tracing = "0.1.37"
-tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
+[workspace]
+members = [
+  "echo-server",
+  "prime-time"
+]
 
 [profile.release]
 lto = "fat"
 codegen-units = 1
+
+[profile.dev]
+codegen-units = 4
