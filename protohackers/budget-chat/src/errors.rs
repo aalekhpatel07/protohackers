@@ -10,7 +10,11 @@ pub enum BudgetChatError {
     #[error(transparent)]
     Initialization(#[from] ClientInitializationError),
     #[error(transparent)]
-    Reunite(#[from] tokio::net::tcp::ReuniteError)
+    Reunite(#[from] tokio::net::tcp::ReuniteError),
+    #[error("Member (id: {0}) is not known")]
+    UnknownMember(String),
+    #[error("No messages to read...")]
+    NoMsgsToRead
 }
 
 /// Any error at initialization warrants a disconnection.
