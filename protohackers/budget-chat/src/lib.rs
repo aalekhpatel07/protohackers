@@ -5,7 +5,6 @@ mod errors;
 
 pub use errors::*;
 pub mod staging;
-pub mod transport;
 
 
 pub type MemberID = std::net::SocketAddr;

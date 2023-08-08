@@ -1,7 +1,7 @@
 use std::{net::SocketAddr, sync::{Arc, Mutex}, time::Duration, io::Cursor};
 use bytes::Buf;
 use tokio::{net::{TcpListener, TcpStream}, io::{AsyncReadExt, AsyncWriteExt}};
-use budget_chat::{BudgetChatError, connection::Connection, room::Room, staging::Staging, transport::RoomTransport};
+use budget_chat::{BudgetChatError, connection::Connection, room::Room, staging::Staging, MemberID};
 use clap::{Parser, error};
 use tracing::{trace, debug, info, warn, error};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -43,80 +43,85 @@ pub async fn run_server(port: u16) -> budget_chat::Result<()> {
         room.run().await;
     });
 
-    let (register_stream_tx, register_stream_rx) = mpsc::unbounded_channel();
-    let (deregister_stream_tx, deregister_stream_rx) = mpsc::unbounded_channel();
+    // let (register_stream_tx, register_stream_rx) = mpsc::unbounded_channel();
+    // let (deregister_stream_tx, deregister_stream_rx) = mpsc::unbounded_channel();
 
     let addr: SocketAddr = ([0; 8], port).into();
     let listener = TcpListener::bind(addr).await?;
     info!("Listening for connections on {}", listener.local_addr()?);
 
-    let room_transport = RoomTransport::new(
-        client_disconnected_tx.clone(),
-        message_received_from_member_tx.clone(),
-        send_to_member_rx,
-        register_stream_rx,
-        deregister_stream_rx,
-        deregister_stream_tx
-    );
+    // let room_transport = RoomTransport::new(
+    //     client_disconnected_tx.clone(),
+    //     message_received_from_member_tx.clone(),
+    //     send_to_member_rx,
+    //     register_stream_rx,
+    //     deregister_stream_rx,
+    //     deregister_stream_tx
+    // );
 
-    let room_transport_handle = tokio::task::spawn(async move {
-        room_transport.run().await.unwrap();
-    });
+    // let room_transport_handle = tokio::task::spawn(async move {
+    //     room_transport.run().await.unwrap();
+    // });
+    tokio::select! {
+        _ = client_loop(listener, client_connected_with_name_tx, client_disconnected_tx) => {
+
+        },
+        _ = room_handle => {
+
+        }
+    }
+
+    Ok(())
+}
+
+pub async fn client_loop(
+    listener: TcpListener,
+    client_connected_with_name_tx: mpsc::UnboundedSender<(MemberID, String)>,
+    client_disconnected_tx: mpsc::UnboundedSender<MemberID>
+) -> budget_chat::Result<()> {
 
     loop {
-
+        let client_disconnected_tx = client_disconnected_tx.clone();
         let (socket, addr) = listener.accept().await?;
-
-        let (anon_disconnected_tx, anon_disconnected_rx) = tokio::sync::mpsc::unbounded_channel();
-        let (send_to_potential_member_tx, send_to_potential_member_rx) = tokio::sync::mpsc::unbounded_channel();
-        let (recvd_from_potential_member_tx, recvd_from_potential_member_rx) = tokio::sync::mpsc::unbounded_channel();
-
-        let (staging_failed_tx, staging_failed_rx) = tokio::sync::mpsc::unbounded_channel();
 
         // Whenever a client connects, we initiate the name-giving ceremony.
         let staging = Staging::new(
             &addr,
             client_connected_with_name_tx.clone(),
-            anon_disconnected_rx,
-            send_to_potential_member_tx,
-            recvd_from_potential_member_rx
-        );
-
-        let initial_transport_handle = budget_chat::transport::InitialTransport::new(
             socket,
-            addr,
-            send_to_potential_member_rx,
-            recvd_from_potential_member_tx,
-            anon_disconnected_tx,
-            staging_failed_rx
         );
 
-        let register_stream_tx_cp = register_stream_tx.clone();
+        // Initiate staging for this client.
         tokio::task::spawn(async move {
-
-            let staging_handle = tokio::task::spawn(async move {
-                if let Err(err) = staging.run().await {
-                    error!("staging.run() failed: {}", err);
-                    staging_failed_tx.send(()).unwrap();
-                    return Err(budget_chat::ClientInitializationError::ConnectionResetByClient)
-                }
-                return Ok(())
-            });
-
-            if let (Ok(_), Ok(stream)) = tokio::join!(
-                staging_handle,
-                initial_transport_handle.run(),
-            ){
-                // If we got here, means the name-giving ceremony was complete.
-                info!("Name-giving ceremony complete for client {:#?}", stream);
-                register_stream_tx_cp.clone().send(stream).unwrap();
-
-            } else {
-                error!("Name-giving error");
+            trace!("Beginning init for potentially connected client.");
+            let Ok((stream, (addr, name))) = staging.run().await else {
+                error!(peer = %addr, "Couldn't finish name-giving of the client.");
+                return;
+            };
+            trace!("Finished name-giving for a client.");
+            if let Err(err) = handle_connected_client(stream, addr, name).await {
+                // something led us to believe the client got lost.
+                error!("failed when trying to handle connected client: {}", err);
+                client_disconnected_tx.send(addr).unwrap();
             }
         });
     }
+}
 
+
+pub async fn handle_connected_client(
+    mut stream: TcpStream,
+    peer_addr: SocketAddr,
+    peer_name: String,
+    // outbound_message_rx: mpsc::UnboundedReceiver<String>,
+    // message_recvd_from_tx: mpsc::UnboundedSender<(MemberID, String)>
+) -> budget_chat::Result<()> {
+    let (mut read_half, mut write_half) = stream.into_split();
+
+
+
+
+    Ok(())
 }
 
 
