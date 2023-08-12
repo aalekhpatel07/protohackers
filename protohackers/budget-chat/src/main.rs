@@ -32,7 +32,7 @@ pub async fn run_server(port: u16) -> budget_chat::Result<()> {
     let (client_disconnected_tx, client_disconnected_rx) = tokio::sync::mpsc::unbounded_channel();
     let (client_connected_with_name_tx, client_connected_with_name_rx) = tokio::sync::mpsc::unbounded_channel();
 
-    let peer_senders: Arc<Mutex<HashMap<SocketAddr, UnboundedSender<Option<String>>>>> = Default::default();
+    let peer_senders: Arc<Mutex<HashMap<SocketAddr, UnboundedSender<String>>>> = Default::default();
 
     let peer_senders_cp = peer_senders.clone();
     tokio::task::spawn(async move {
@@ -41,7 +41,7 @@ pub async fn run_server(port: u16) -> budget_chat::Result<()> {
                 Some((peer, message)) => {
                     let guard = peer_senders_cp.lock().unwrap();
                     let sender = guard.get(&peer).unwrap();
-                    sender.send(Some(message)).unwrap();
+                    sender.send(message).unwrap();
                 },
                 None => {
                     debug!("Got None in send_to_member_rx. Dropping sender handle.");
@@ -94,8 +94,8 @@ pub async fn run_server(port: u16) -> budget_chat::Result<()> {
 
 pub async fn client_loop(
     listener: TcpListener,
-    peer_senders: Arc<Mutex<HashMap<SocketAddr, UnboundedSender<Option<String>>>>>,
-    message_recvd_from_member_tx: mpsc::UnboundedSender<(MemberID, Option<String>)>,
+    peer_senders: Arc<Mutex<HashMap<SocketAddr, UnboundedSender<String>>>>,
+    message_recvd_from_member_tx: mpsc::UnboundedSender<(MemberID, String)>,
     client_connected_with_name_tx: mpsc::UnboundedSender<(MemberID, String)>,
     client_disconnected_tx: mpsc::UnboundedSender<MemberID>
 ) -> budget_chat::Result<()> {
@@ -145,8 +145,8 @@ pub async fn handle_connected_client(
     stream: TcpStream,
     peer_addr: SocketAddr,
     peer_name: String,
-    mut outbound_message_rx: UnboundedReceiver<Option<String>>,
-    message_recvd_from_member_tx: mpsc::UnboundedSender<(MemberID, Option<String>)>
+    mut outbound_message_rx: UnboundedReceiver<String>,
+    message_recvd_from_member_tx: mpsc::UnboundedSender<(MemberID, String)>
 ) -> budget_chat::Result<()> {
     debug!("Handling connected client: {:#?}", (peer_addr, peer_name));
     let (read_half, mut write_half) = stream.into_split();
@@ -157,20 +157,20 @@ pub async fn handle_connected_client(
     loop {
         select! {
             line = lines_from_peer.next_line() => match line {
-                Ok(maybe_line) => {
-                    message_recvd_from_member_tx.send((peer_addr, maybe_line)).unwrap();
+                Ok(Some(line)) => {
+                    message_recvd_from_member_tx.send((peer_addr, line)).unwrap();
+                },
+                Ok(None) => {
+                    debug!("Received no line from client?");
                 },
                 Err(err) => {
                     return Err(err.into());
                 }
             },
             line = outbound_message_rx.recv() => match line {
-                Some(Some(line)) => {
+                Some(line) => {
                     write_half.write_all(line.as_bytes()).await?;
                     write_half.write_all(b"\n").await?;
-                },
-                Some(None) => {
-                    panic!("");
                 },
                 None => {
                     return Ok(());

@@ -45,6 +45,7 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
             line = lines_from_stdin.next_line() => match line {
                 Ok(Some(line)) => {
+                    eprintln!("Will send: {}", line);
                     writer.write_all(line.as_bytes()).await?;
                     writer.write_all(b"\n").await?;
                 },
