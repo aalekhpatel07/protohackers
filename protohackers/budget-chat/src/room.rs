@@ -42,6 +42,7 @@ pub struct Room {
 
 
 impl Room {
+    #[tracing::instrument(skip_all)]
     pub fn new(
         message_received_from_member: mpsc::UnboundedReceiver<(MemberID, Option<Message>)>,
         send_to_member: mpsc::UnboundedSender<(MemberID, Message)>,
@@ -58,6 +59,7 @@ impl Room {
     }
 
     /// Given the member_id just disconnected, send messages to others about it.
+    #[tracing::instrument]
     pub async fn notify_others_of_disconnection(&mut self, disconnected_member: MemberID) {
         let disconnected_member_name = self.get_name(&disconnected_member).unwrap();
 
@@ -78,6 +80,7 @@ impl Room {
 
     /// Given the member_id just connected (after finding a right name), send messages to everyone else
     /// that this member has connected.
+    #[tracing::instrument]
     pub fn notify_others_of_new_member(&mut self, connected_member: MemberID) {
         let conncted_member_name = self.get_name(&connected_member).unwrap();
 
@@ -96,6 +99,7 @@ impl Room {
         });
     }
 
+    #[tracing::instrument(skip(self), fields(self.members = ?self.members))]
     pub async fn run(&mut self) {
         info!("Inside Room::run");
         loop {
@@ -114,14 +118,15 @@ impl Room {
                     if let Some(msg) = msg {
                         self.broadcast_message_to_other_members_except(&sender, &msg);
                     } else {
-                        let name = self.get_name(&sender).unwrap();
-                        warn!(client = %name, "Client sent EOF. Ignoring it.");
+                        // let name = self.get_name(&sender).unwrap();
+                        warn!(client = %sender, "Client sent EOF. Ignoring it.");
                     }
                 },
             }
         }
     }
 
+    #[tracing::instrument]
     pub fn broadcast_message_to_other_members_except(
         &self, 
         except_member_id: &MemberID, message: &str) {
@@ -139,6 +144,7 @@ impl Room {
         });
     }
 
+    #[tracing::instrument]
     pub fn create_message_from_member(&self, member_id: &MemberID, message: &str) -> String {
         self
         .members
@@ -150,14 +156,17 @@ impl Room {
     }
 
 
+    #[tracing::instrument]
     pub fn add_member(&mut self, member_id: MemberID, member_name: &str) {
         self.members.insert(member_id, member_name.to_string());
     }
 
+    #[tracing::instrument]
     pub fn remove_member(&mut self, member_id: MemberID) {
         self.members.remove(&member_id);
     }
 
+    #[tracing::instrument]
     pub fn get_name(&self, member_id: &MemberID) -> Option<String> {
         self.members.get(member_id).cloned()
     }

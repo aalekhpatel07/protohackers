@@ -1,6 +1,5 @@
-use std::{net::SocketAddr, sync::{Arc, Mutex}, time::Duration, io::Cursor};
-use bytes::Buf;
-use tokio::{net::{TcpListener, TcpStream}, io::{AsyncReadExt, AsyncWriteExt}};
+use std::{net::SocketAddr, sync::{Arc, Mutex}, time::Duration, io::Cursor, collections::HashMap};
+use tokio::{net::{TcpListener, TcpStream}, io::{AsyncReadExt, AsyncWriteExt, BufReader, AsyncBufReadExt}, sync::mpsc::{UnboundedSender, UnboundedReceiver}, select};
 use budget_chat::{BudgetChatError, connection::Connection, room::Room, staging::Staging, MemberID};
 use clap::{Parser, error};
 use tracing::{trace, debug, info, warn, error};
@@ -29,9 +28,28 @@ pub async fn run_server(port: u16) -> budget_chat::Result<()> {
     // let room = Room::new();
 
     let (message_received_from_member_tx, message_received_from_member_rx) = tokio::sync::mpsc::unbounded_channel();
-    let (send_to_member_tx, send_to_member_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (send_to_member_tx, mut send_to_member_rx) = tokio::sync::mpsc::unbounded_channel();
     let (client_disconnected_tx, client_disconnected_rx) = tokio::sync::mpsc::unbounded_channel();
     let (client_connected_with_name_tx, client_connected_with_name_rx) = tokio::sync::mpsc::unbounded_channel();
+
+    let peer_senders: Arc<Mutex<HashMap<SocketAddr, UnboundedSender<Option<String>>>>> = Default::default();
+
+    let peer_senders_cp = peer_senders.clone();
+    tokio::task::spawn(async move {
+        loop {
+            match send_to_member_rx.recv().await {
+                Some((peer, message)) => {
+                    let guard = peer_senders_cp.lock().unwrap();
+                    let sender = guard.get(&peer).unwrap();
+                    sender.send(Some(message)).unwrap();
+                },
+                None => {
+                    debug!("Got None in send_to_member_rx. Dropping sender handle.");
+                    break
+                }
+            }
+        }
+    });
 
     let mut room = Room::new(
         message_received_from_member_rx, 
@@ -63,11 +81,11 @@ pub async fn run_server(port: u16) -> budget_chat::Result<()> {
     //     room_transport.run().await.unwrap();
     // });
     tokio::select! {
-        _ = client_loop(listener, client_connected_with_name_tx, client_disconnected_tx) => {
-
+        _ = client_loop(listener, peer_senders, message_received_from_member_tx.clone(), client_connected_with_name_tx, client_disconnected_tx) => {
+            info!("Client loop complete... :sus:");
         },
         _ = room_handle => {
-
+            info!("Room handle complete... :sus:");
         }
     }
 
@@ -76,10 +94,11 @@ pub async fn run_server(port: u16) -> budget_chat::Result<()> {
 
 pub async fn client_loop(
     listener: TcpListener,
+    peer_senders: Arc<Mutex<HashMap<SocketAddr, UnboundedSender<Option<String>>>>>,
+    message_recvd_from_member_tx: mpsc::UnboundedSender<(MemberID, Option<String>)>,
     client_connected_with_name_tx: mpsc::UnboundedSender<(MemberID, String)>,
     client_disconnected_tx: mpsc::UnboundedSender<MemberID>
 ) -> budget_chat::Result<()> {
-
     loop {
         let client_disconnected_tx = client_disconnected_tx.clone();
         let (socket, addr) = listener.accept().await?;
@@ -90,7 +109,13 @@ pub async fn client_loop(
             client_connected_with_name_tx.clone(),
             socket,
         );
+        let msg_recvd_from_member_tx = message_recvd_from_member_tx.clone();
 
+        let (outbound_msg_tx, outbound_msg_rx) = tokio::sync::mpsc::unbounded_channel();
+        {
+            let mut guard = peer_senders.lock().unwrap();
+            guard.insert(addr, outbound_msg_tx);
+        }
         // Initiate staging for this client.
         tokio::task::spawn(async move {
             trace!("Beginning init for potentially connected client.");
@@ -98,8 +123,15 @@ pub async fn client_loop(
                 error!(peer = %addr, "Couldn't finish name-giving of the client.");
                 return;
             };
+            // let (send_to_peer_tx, send_to_peer_rx) = tokio::sync::mpsc::unbounded_channel();
             trace!("Finished name-giving for a client.");
-            if let Err(err) = handle_connected_client(stream, addr, name).await {
+            if let Err(err) = handle_connected_client(
+                stream, 
+                addr, 
+                name,
+                outbound_msg_rx,
+                msg_recvd_from_member_tx
+            ).await {
                 // something led us to believe the client got lost.
                 error!("failed when trying to handle connected client: {}", err);
                 client_disconnected_tx.send(addr).unwrap();
@@ -110,18 +142,42 @@ pub async fn client_loop(
 
 
 pub async fn handle_connected_client(
-    mut stream: TcpStream,
+    stream: TcpStream,
     peer_addr: SocketAddr,
     peer_name: String,
-    // outbound_message_rx: mpsc::UnboundedReceiver<String>,
-    // message_recvd_from_tx: mpsc::UnboundedSender<(MemberID, String)>
+    mut outbound_message_rx: UnboundedReceiver<Option<String>>,
+    message_recvd_from_member_tx: mpsc::UnboundedSender<(MemberID, Option<String>)>
 ) -> budget_chat::Result<()> {
-    let (mut read_half, mut write_half) = stream.into_split();
+    debug!("Handling connected client: {:#?}", (peer_addr, peer_name));
+    let (read_half, mut write_half) = stream.into_split();
 
+    let reader = BufReader::new(read_half);
+    let mut lines_from_peer = reader.lines();
 
-
-
-    Ok(())
+    loop {
+        select! {
+            line = lines_from_peer.next_line() => match line {
+                Ok(maybe_line) => {
+                    message_recvd_from_member_tx.send((peer_addr, maybe_line)).unwrap();
+                },
+                Err(err) => {
+                    return Err(err.into());
+                }
+            },
+            line = outbound_message_rx.recv() => match line {
+                Some(Some(line)) => {
+                    write_half.write_all(line.as_bytes()).await?;
+                    write_half.write_all(b"\n").await?;
+                },
+                Some(None) => {
+                    panic!("");
+                },
+                None => {
+                    return Ok(());
+                }
+            }
+        }
+    }    
 }
 
 

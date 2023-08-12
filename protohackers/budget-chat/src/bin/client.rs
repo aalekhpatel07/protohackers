@@ -1,10 +1,7 @@
-use std::io::{stdin, Cursor};
-
-use tokio::{net::{TcpStream, TcpSocket}, io::{AsyncReadExt, AsyncWriteExt}};
+use tokio::{net::TcpStream, io::{AsyncWriteExt, AsyncBufReadExt, BufReader}, select};
 use clap::Parser;
 use tracing::{info, debug, warn, trace, error};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-
 
 #[derive(Debug, Parser)]
 pub struct Args {
@@ -27,45 +24,37 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
     let stream = TcpStream::connect((args.server_url, args.server_port)).await?;
-    let (mut read_half, write_half) = stream.into_split();
+    let (reader, mut writer) = stream.into_split();
+    let reader = BufReader::new(reader);
+    let mut lines_from_server = reader.lines();
 
+    let stdin = BufReader::new(tokio::io::stdin());
+    let mut lines_from_stdin = stdin.lines();
 
-    let read_handle = tokio::task::spawn(async move {
-        loop {
-            let mut dest = String::new();
-            let Ok(bytes_read) = read_half.read_to_string(&mut dest).await else {
-                error!("Failed to read bytes from stream. Disconnecting.");
-                return;
-            };
-            if bytes_read == 0 {
-                trace!("Received EOF from server. Not sure what to do about it..");
-                break;
-            }
-            trace!("Read bytes {}", bytes_read);
-            info!("{}", dest);
-        }
-    });
-
-    let write_handle = tokio::task::spawn(async move {
-        let mut write_half = write_half;
-        loop {
-            let mut contents = String::new();
-            if let Ok(bytes_read) = stdin().read_line(&mut contents) {
-                if bytes_read == 0 {
-                    trace!("Received EOF from stdin. Disconnecting.");
+    loop {
+        select! {
+            line = lines_from_server.next_line() => match line {
+                Ok(Some(line)) => {
+                    println!("{}", line);
+                },
+                Ok(None) => break,
+                Err(err) => {
+                    error!("err when reading line from server: {}", err);
                     break;
                 }
-                let mut cursor = Cursor::new(contents);
-                if let Err(err) = write_half.write_all_buf(&mut cursor).await { 
-                    trace!("Connection reset by server... Disconnecting. {}", err);
+            },
+            line = lines_from_stdin.next_line() => match line {
+                Ok(Some(line)) => {
+                    writer.write_all(line.as_bytes()).await?;
+                    writer.write_all(b"\n").await?;
+                },
+                Ok(None) => break,
+                Err(err) => {
+                    error!("err when reading line from stdin: {}", err);
                     break;
                 }
             }
-
         }
-    });
-
-    _ = tokio::join!(read_handle, write_handle);
-
+    }
     Ok(())
 }
