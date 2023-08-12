@@ -90,6 +90,7 @@ impl Room {
         loop {
             tokio::select! {
                 Some(disconnected_member) = self.client_disconnected_rx.recv() => {
+                    warn!("Recvd client_disconnected");
                     self.notify_others_of_disconnection(disconnected_member).await;
                     self.remove_member(disconnected_member);
                 },
