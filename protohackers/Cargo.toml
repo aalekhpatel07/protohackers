@@ -1,7 +1,8 @@
 [workspace]
 members = [
   "echo-server",
-  "prime-time"
+  "prime-time",
+  "budget-chat",
 ]
 
 [profile.release]

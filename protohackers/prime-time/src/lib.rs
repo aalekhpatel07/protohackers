@@ -1,5 +1,5 @@
 use std::{net::SocketAddr, io::Cursor};
-use tracing::{info, error, warn, trace, debug, Level};
+use tracing::{info, error, warn, trace, debug};
 
 use tokio::{net::{TcpStream, TcpListener}, io::{AsyncReadExt, AsyncWriteExt}};
 use bytes::{BytesMut, Buf};
@@ -92,7 +92,7 @@ impl Connection {
                 Ok(Some(frame))
             },
             Err(err) => {
-                Err(err.into())
+                Err(err)
             }
         }
     }
@@ -124,7 +124,7 @@ pub mod math {
     }
 
     pub fn is_prime(number: u64) -> bool {
-        let start_time = std::time::Instant::now();
+        let _start_time = std::time::Instant::now();
         if matches!(number, 2 | 3 | 5 | 7 | 11) {
             return true;
         }
@@ -133,13 +133,12 @@ pub mod math {
         }
         let start = 2;
         let end = ((number as f64).sqrt().ceil() + 1.0) as u64;
-        let result = 
-        (start..=end)
-        .all(|divisor| number % divisor != 0);
+        
 
         // tracing::trace!("Checked primality of {} (prime: {}) in {:#?}", number, result, start_time.elapsed());
 
-        result
+        (start..=end)
+        .all(|divisor| number % divisor != 0)
     }
 }
 
