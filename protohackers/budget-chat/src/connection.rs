@@ -1,6 +1,6 @@
 use std::{
     net::SocketAddr,
-    sync::{atomic::AtomicBool, Arc, Mutex},
+    sync::{Arc, Mutex},
 };
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},

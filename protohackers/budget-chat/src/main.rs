@@ -8,7 +8,6 @@ use tokio::{
     select,
     sync::mpsc::UnboundedSender, io::{BufReader, AsyncBufReadExt, AsyncWriteExt},
 };
-// use budget_chat::{BudgetChatError, connection::Connection, room::Room, staging::Staging, MemberID};
 use budget_chat::{
     connection::Connection,
     room::{Message, Room},
@@ -81,19 +80,6 @@ pub async fn run_server(port: u16) -> budget_chat::Result<()> {
 
     room_result.unwrap();
     client_loop_result.unwrap();
-    // tokio::select! {
-    //     _ = client_loop(
-    //         listener,
-    //         message_received_from_member_tx.clone(),
-    //         client_connected_with_name_tx,
-    //         client_disconnected_tx
-    //     ) => {
-    //         info!("Client loop complete... :sus:");
-    //     },
-    //     _ = room_handle => {
-    //         info!("Room handle complete... :sus:");
-    //     }
-    // }
 
     Ok(())
 }
@@ -197,7 +183,6 @@ pub async fn handle_client(
     info!("Staging complete... Connecting member with Room.");
 
     // We'll only call it a Connection after its been through staging.
-    // Set up a connection with channels.
     let (outbound_tx, outbound_rx) = mpsc::unbounded_channel();
     let connection = Connection::new(socket, outbound_rx);
 
@@ -248,7 +233,7 @@ async fn main() -> budget_chat::Result<()> {
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "budget_chat=trace,tokio=debug".into()),
+                .unwrap_or_else(|_| "budget_chat=info,tokio=debug".into()),
         )
         .with(tracing_subscriber::fmt::layer())
         .init();
