@@ -144,8 +144,8 @@ pub async fn handle_client(
 ) -> budget_chat::Result<()> {
     // Set up a connection with channels.
     let (outbound_tx, outbound_rx) = mpsc::unbounded_channel();
-
-    let connection = Connection::new(socket, outbound_rx);
+    let (shutdown_tx, shutdown_rx) = mpsc::unbounded_channel();
+    let connection = Connection::new(socket, outbound_rx, shutdown_rx);
 
     let (staging_messages_inbound_rx, _disconnect_rx) = connection.subscribe();
 
@@ -175,6 +175,9 @@ pub async fn handle_client(
     let connection_handle = tokio::task::spawn(connection.run());
 
     let Ok(name) = staging.run().await else {
+        if let Err(err) = shutdown_tx.send(()) {
+            error!("failed to send shutdown signal to connection: {}", err);
+        }
         return Ok(());
     };
 

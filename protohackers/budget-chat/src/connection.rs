@@ -24,10 +24,11 @@ pub struct Connection {
     outbound_message_rx: UnboundedReceiver<Message>,
     staging_message_sent: AtomicBool,
     staging_message_received: AtomicBool,
+    disconnect_rx: UnboundedReceiver<()>
 }
 
 impl Connection {
-    pub fn new(stream: TcpStream, outbound_message_rx: UnboundedReceiver<Message>) -> Self {
+    pub fn new(stream: TcpStream, outbound_message_rx: UnboundedReceiver<Message>, disconnect_rx: UnboundedReceiver<()>) -> Self {
         let remote_address = stream.peer_addr().unwrap();
         Self {
             stream,
@@ -36,6 +37,7 @@ impl Connection {
             outbound_message_rx,
             staging_message_sent: AtomicBool::new(false),
             staging_message_received: AtomicBool::new(false),
+            disconnect_rx
         }
     }
 
@@ -100,12 +102,20 @@ impl Connection {
         let mut outbound_message_rx = self.outbound_message_rx;
         let staging_message_sent = self.staging_message_sent;
         let staging_message_received = self.staging_message_received;
+        let mut disconnect_rx = self.disconnect_rx;
 
         let reader = BufReader::new(read_half);
         let mut lines_from_reader = reader.lines();
 
+
         loop {
             select! {
+                _ = disconnect_rx.recv() => {
+                    if let Err(err) = write_half.shutdown().await {
+                        error!("Failed to shutdown connection: {}", err);
+                    }
+                    break;
+                },
                 message = outbound_message_rx.recv() => match message {
                     Some(msg) => {
                         if msg.is_staging() && staging_message_sent.load(std::sync::atomic::Ordering::Relaxed) {
@@ -117,8 +127,8 @@ impl Connection {
                             // Set the flag that now we've sent a staging message.
                             staging_message_sent.store(true, std::sync::atomic::Ordering::Relaxed);
                         }
-                        write_half.write_all(msg.as_str().as_bytes()).await?;
-                        write_half.write_all(b"\n").await?;
+                        write_half.write_all(msg.as_str().as_bytes()).await.unwrap();
+                        write_half.write_all(b"\n").await.unwrap();
                     },
                     None => {
                         // error!("No outbound message senders remaining for the client. Dropping the connection.");
@@ -151,7 +161,7 @@ impl Connection {
                         Self::notify_subscribers_of_failure(Arc::clone(&subscribers));
                         break;
                     }
-                }
+                },
             }
         }
         Ok(())
