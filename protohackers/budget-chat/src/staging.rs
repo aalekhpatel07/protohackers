@@ -8,7 +8,7 @@ use futures::channel::mpsc::UnboundedReceiver;
 use tokio::sync::mpsc;
 use tracing::{trace, warn};
 
-use crate::{MemberID, ClientInitializationError};
+use crate::{MemberID, ClientInitializationError, room::Message};
 
 
 
@@ -25,8 +25,8 @@ pub enum Membership {
 #[derive(Debug)]
 pub struct Staging {
     pub potential_peer_id: MemberID,
-    pub send_to_member_tx: mpsc::UnboundedSender<String>,
-    pub recvd_from_member_rx: mpsc::UnboundedReceiver<String>,
+    pub send_to_member_tx: mpsc::UnboundedSender<Message>,
+    pub recvd_from_member_rx: mpsc::UnboundedReceiver<Message>,
     pub membership: Membership,
 }
 
@@ -35,8 +35,8 @@ impl Staging {
 
     pub fn new(
         potential_peer_id: MemberID, 
-        send_to_member_tx: mpsc::UnboundedSender<String>, 
-        recvd_from_member_rx: mpsc::UnboundedReceiver<String>, 
+        send_to_member_tx: mpsc::UnboundedSender<Message>, 
+        recvd_from_member_rx: mpsc::UnboundedReceiver<Message>, 
     ) -> Self {
         Self {
             potential_peer_id,
@@ -68,10 +68,10 @@ impl Staging {
                         return Err(ClientInitializationError::ConnectionResetByClient.into());
                     };
                     trace!(raw = %message, "Received name from member. Validating...");
-                    let Some(cleaned) = Self::is_name_valid(&message) else {
+                    let Some(cleaned) = Self::is_name_valid(&message.as_str()) else {
                         warn!("The member sent us a bad name. We'll terminate the connection.");
-                        self.send_bad_name_message(&message);
-                        return Err(ClientInitializationError::InvalidName(message).into());
+                        // self.send_bad_name_message(&message);
+                        return Err(ClientInitializationError::InvalidName(message.into()).into());
                     };
                     trace!(cleaned = %cleaned, "Name validation complete for member...");
                     self.membership = Membership::Member(cleaned.to_string());
@@ -85,13 +85,14 @@ impl Staging {
     }
 
     pub fn request_name(&self) {
-        self.send_to_member_tx.send("Welcome to budgetchat! What shall I call you?".to_string()).unwrap();
-    }
-
-    pub fn send_bad_name_message(&self, bad_name: &str) {
-        let message = format!("You provided an invalid name so byeee!: {}", bad_name);
+        let message = Message::Staging("Welcome to budgetchat! What shall I call you?".to_string());
         self.send_to_member_tx.send(message).unwrap();
     }
+
+    // pub fn send_bad_name_message(&self, bad_name: &Message) {
+    //     let message = Message::Staging(format!("You provided an invalid name so byeee!: {}", bad_name));
+    //     self.send_to_member_tx.send(message).unwrap();
+    // }
 
     /// Return None if the name cannot be cleaned into a valid name, Some(cleaned) otherwise.
     pub fn is_name_valid<'a>(name: &'a str) -> Option<&'a str> {

@@ -1,7 +1,7 @@
 use std::{net::SocketAddr, sync::{Arc, Mutex}, time::Duration, io::Cursor, collections::HashMap};
 use tokio::{net::{TcpListener, TcpStream}, io::{AsyncReadExt, AsyncWriteExt, BufReader, AsyncBufReadExt}, sync::{mpsc::{UnboundedSender, UnboundedReceiver}, oneshot}, select, join};
 // use budget_chat::{BudgetChatError, connection::Connection, room::Room, staging::Staging, MemberID};
-use budget_chat::{MemberID, room::Room, staging::Staging, connection::Connection};
+use budget_chat::{MemberID, room::{Room, Message}, staging::Staging, connection::Connection};
 use clap::{Parser, error};
 use tracing::{trace, debug, info, warn, error};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -26,7 +26,7 @@ pub async fn run_server(port: u16) -> budget_chat::Result<()> {
     let (client_disconnected_tx, client_disconnected_rx) = tokio::sync::mpsc::unbounded_channel();
     let (client_connected_with_name_tx, client_connected_with_name_rx) = tokio::sync::mpsc::unbounded_channel();
 
-    let outbound_peer_map: Arc<Mutex<HashMap<SocketAddr, UnboundedSender<String>>>> = Default::default();
+    let outbound_peer_map: Arc<Mutex<HashMap<SocketAddr, UnboundedSender<Message>>>> = Default::default();
 
     let outbound_peer_map_cp = outbound_peer_map.clone();
     tokio::task::spawn(async move {
@@ -59,7 +59,16 @@ pub async fn run_server(port: u16) -> budget_chat::Result<()> {
     let listener = TcpListener::bind(addr).await?;
     info!("Listening for connections on {}", listener.local_addr()?);
 
-    let (room_result, client_loop_result) = tokio::join!(room_handle, client_loop(listener, message_received_from_member_tx.clone(), client_connected_with_name_tx, client_disconnected_tx, outbound_peer_map.clone()));
+    let (room_result, client_loop_result) = tokio::join!(
+        room_handle, 
+        client_loop(
+            listener, 
+            message_received_from_member_tx.clone(), 
+            client_connected_with_name_tx, 
+            client_disconnected_tx, 
+            outbound_peer_map.clone()
+        )
+    );
 
     room_result.unwrap();
     client_loop_result.unwrap();
@@ -82,10 +91,10 @@ pub async fn run_server(port: u16) -> budget_chat::Result<()> {
 
 pub async fn client_loop(
     listener: TcpListener,
-    message_recvd_from_member_tx: mpsc::UnboundedSender<(MemberID, String)>,
+    message_recvd_from_member_tx: mpsc::UnboundedSender<(MemberID, Message)>,
     client_connected_with_name_tx: mpsc::UnboundedSender<(MemberID, String)>,
     client_disconnected_tx: mpsc::UnboundedSender<MemberID>,
-    outbound_peer_map: Arc<Mutex<HashMap<SocketAddr, UnboundedSender<String>>>>
+    outbound_peer_map: Arc<Mutex<HashMap<SocketAddr, UnboundedSender<Message>>>>
 ) -> budget_chat::Result<()> {
 
     debug!("Entering client_loop...");
@@ -117,10 +126,10 @@ pub async fn client_loop(
 pub async fn handle_client(
     socket: TcpStream,
     addr: MemberID,
-    message_recvd_from_member_tx: mpsc::UnboundedSender<(MemberID, String)>,
+    message_recvd_from_member_tx: mpsc::UnboundedSender<(MemberID, Message)>,
     client_connected_with_name_tx: mpsc::UnboundedSender<(MemberID, String)>,
     client_disconnected_tx: mpsc::UnboundedSender<MemberID>,
-    outbound_peer_map: Arc<Mutex<HashMap<SocketAddr, UnboundedSender<String>>>>
+    outbound_peer_map: Arc<Mutex<HashMap<SocketAddr, UnboundedSender<Message>>>>
 ) -> budget_chat::Result<()> {
     // Set up a connection with channels.
     let (outbound_tx, outbound_rx) = mpsc::unbounded_channel();
@@ -170,10 +179,11 @@ pub async fn handle_client(
     {
         let mut guard = outbound_peer_map.lock().unwrap();
         guard.insert(addr, outbound_tx);
-        debug!("peer map: {:#?}", &*guard);
+        debug!("peer map: {:#?}", guard.keys());
+        drop(guard);
     }
-
     client_connected_with_name_tx.send((addr, name)).unwrap();
+
 
     let listen_for_messages = tokio::task::spawn(async move {
         let send_messages = async move {
