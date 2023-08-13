@@ -5,16 +5,15 @@ use tracing::{debug, error, info, warn};
 
 pub type Message = String;
 
-
 /// An actor for the ChatRoom that handles all the business logic of the messages to broadcast
 /// inside of our budget chatroom.
 #[derive(Debug)]
 pub struct Room {
     /// A source of truth for currently active members and their names.
-    /// 
+    ///
     /// *Note*: This could lag arbitrarily behind the actual connection map (SocketAddr => UnboundedSender<Message>)
     /// since the Room only ever contains members who were successfully named and made it through the staging area.
-    /// 
+    ///
     members: HashMap<MemberID, String>,
 
     /// Someone will let us know when we receive a message from a member.
@@ -126,7 +125,7 @@ impl Room {
 
     /// Drive the chat room by listening for any inbound/outbound messages
     /// to/from our chat room as well as any new members connecting and old ones leaving.
-    /// 
+    ///
     #[tracing::instrument(skip(self), fields(self.members = ?self.members))]
     pub async fn run(&mut self) {
         info!("Starting our budget chat room...");
@@ -200,7 +199,7 @@ impl Room {
     }
 
     /// Format a raw message as the following:
-    /// 
+    ///
     /// `[{user}] {message}`
     #[tracing::instrument(skip(self))]
     pub fn create_message_from_member(
@@ -232,22 +231,18 @@ impl Room {
 
     /// Get all the members except for the given one.
     fn members_except(&self, member_id: &MemberID) -> Vec<(MemberID, String)> {
-        self
-        .members
-        .iter()
-        .filter(|(stored_member_id, _)| {
-            *stored_member_id != member_id
-        })
-        .map(|(id, name)| (*id, name.clone()))
-        .collect()
+        self.members
+            .iter()
+            .filter(|(stored_member_id, _)| *stored_member_id != member_id)
+            .map(|(id, name)| (*id, name.clone()))
+            .collect()
     }
 
     /// Get the names of all the members except for the given one.
     fn member_names_except(&self, member_id: &MemberID) -> Vec<String> {
         self.members_except(member_id)
-        .into_iter()
-        .map(|(_, name)| name)
-        .collect()
+            .into_iter()
+            .map(|(_, name)| name)
+            .collect()
     }
-
 }

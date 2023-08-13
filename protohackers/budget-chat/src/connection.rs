@@ -13,7 +13,6 @@ use tracing::{error, trace, warn};
 
 use crate::{room::Message, Shared};
 
-
 /// Keep the actual sender handle around, as well as a disconnect signal sender,
 /// in case any of the underlying IO failed when we didn't expect it to.
 type SubscriberHandle = (UnboundedSender<Message>, oneshot::Sender<()>);
@@ -53,7 +52,7 @@ impl Connection {
         (rx, on_disconnect_rx)
     }
 
-    /// We made some progress because we just read a message, notify all our subscribers 
+    /// We made some progress because we just read a message, notify all our subscribers
     /// about this message.
     #[tracing::instrument(skip_all, fields(message))]
     fn notify_subscribers(
@@ -83,7 +82,7 @@ impl Connection {
             let (removed, on_disconnect) = guard.remove(index);
             trace!(removed = ?removed, "Removed stream subscriber.");
             trace!("Notifying of disconnection.");
-            // Notifying of disconnection could fail but only if the subscriber itself 
+            // Notifying of disconnection could fail but only if the subscriber itself
             // didn't care to be notified (i.e. dropped the receiver before receiving the signal).
             _ = on_disconnect.send(());
         }
@@ -93,9 +92,7 @@ impl Connection {
     /// about it, and drop all the sender handles we carried
     /// with us. This way, if the subscriber was only listening to
     /// us, then it'll stop receiving messages, thus closing it.
-    fn notify_subscribers_of_failure(
-        inbound_message_subscribers: Shared<Vec<SubscriberHandle>>,
-    ) {
+    fn notify_subscribers_of_failure(inbound_message_subscribers: Shared<Vec<SubscriberHandle>>) {
         let mut guard = inbound_message_subscribers.lock().unwrap();
         for index in (0..guard.len()).rev() {
             let (removed, on_disconnect) = guard.remove(index);
@@ -120,7 +117,6 @@ impl Connection {
 
         let reader = BufReader::new(read_half);
         let mut lines_from_reader = reader.lines();
-
 
         loop {
             select! {

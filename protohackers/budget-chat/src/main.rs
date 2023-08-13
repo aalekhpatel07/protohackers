@@ -1,20 +1,21 @@
-use std::{
-    collections::HashMap,
-    net::SocketAddr,
-    sync::{Arc, Mutex},
-};
-use tokio::{
-    net::{TcpListener, TcpStream},
-    select,
-    sync::mpsc::UnboundedSender, io::{BufReader, AsyncBufReadExt, AsyncWriteExt},
-};
 use budget_chat::{
     connection::Connection,
     room::{Message, Room},
     MemberID,
 };
 use clap::Parser;
+use std::{
+    collections::HashMap,
+    net::SocketAddr,
+    sync::{Arc, Mutex},
+};
 use tokio::sync::mpsc;
+use tokio::{
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    net::{TcpListener, TcpStream},
+    select,
+    sync::mpsc::UnboundedSender,
+};
 use tracing::{debug, error, info, trace, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -40,7 +41,7 @@ async fn main() -> budget_chat::Result<()> {
     Ok(())
 }
 
-/// 
+///
 pub async fn run_server(port: u16) -> budget_chat::Result<()> {
     let (message_received_from_member_tx, message_received_from_member_rx) =
         tokio::sync::mpsc::unbounded_channel();
@@ -142,14 +143,13 @@ pub async fn client_loop(
     }
 }
 
-
 /// Try to complete the name-giving ceremony (aka "staging")
 /// for a TCP-connected peer and if everything goes okay, return the stream
 /// back as is, along with the name the peer chose.
 #[tracing::instrument(fields(kind = "staging"))]
 pub async fn stage_client(
     socket: TcpStream,
-    addr: MemberID
+    addr: MemberID,
 ) -> budget_chat::Result<(String, TcpStream)> {
     let (read_half, mut write_half) = socket.into_split();
     let reader = BufReader::new(read_half);
@@ -157,7 +157,9 @@ pub async fn stage_client(
 
     // Try writing. If we fail, drop the client.
     trace!("Requesting client for a name.");
-    write_half.write_all(b"Welcome to budgetchat! What shall I call you?\n").await?;
+    write_half
+        .write_all(b"Welcome to budgetchat! What shall I call you?\n")
+        .await?;
 
     let Some(ref name) = lines.next_line().await? else {
         warn!("Could not read line from client when we were expecting a name. Disconnecting.");
@@ -201,14 +203,12 @@ pub async fn handle_client(
     client_disconnected_tx: mpsc::UnboundedSender<MemberID>,
     outbound_peer_map: Arc<Mutex<HashMap<SocketAddr, UnboundedSender<Message>>>>,
 ) -> budget_chat::Result<()> {
-
     let Ok((name, socket)) = stage_client(socket, addr).await else {
         error!("Staging failed for peer");
         return Ok(());
     };
-    
-    tracing::Span::current()
-    .record("name", &name);
+
+    tracing::Span::current().record("name", &name);
 
     info!("Staging complete... Connecting member with Room.");
 
