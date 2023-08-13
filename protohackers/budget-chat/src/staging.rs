@@ -4,7 +4,7 @@
 // use tokio::net::{TcpStream};
 // use crate::MemberID;
 
-use futures::channel::mpsc::UnboundedReceiver;
+
 use tokio::sync::mpsc;
 use tracing::{trace, warn};
 
@@ -68,7 +68,7 @@ impl Staging {
                         return Err(ClientInitializationError::ConnectionResetByClient.into());
                     };
                     trace!(raw = %message, "Received name from member. Validating...");
-                    let Some(cleaned) = Self::is_name_valid(&message.as_str()) else {
+                    let Some(cleaned) = Self::is_name_valid(message.as_str()) else {
                         warn!("The member sent us a bad name. We'll terminate the connection.");
                         // self.send_bad_name_message(&message);
                         return Err(ClientInitializationError::InvalidName(message.into()).into());
@@ -95,7 +95,7 @@ impl Staging {
     // }
 
     /// Return None if the name cannot be cleaned into a valid name, Some(cleaned) otherwise.
-    pub fn is_name_valid<'a>(name: &'a str) -> Option<&'a str> {
+    pub fn is_name_valid(name: &str) -> Option<&str> {
         let trimmed = name.trim();
         if trimmed.is_empty() {
             return None;

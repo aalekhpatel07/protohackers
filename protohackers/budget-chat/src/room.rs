@@ -109,7 +109,7 @@ impl Room {
         .for_each(|member_id| {
             self.send_to_member.send(
                 (
-                    member_id.clone(), 
+                    *member_id, 
                     format!("* {} has left the room", disconnected_member_name).into()
                 )
             )
@@ -145,7 +145,7 @@ impl Room {
         .for_each(|member_id| {
             self.send_to_member.send(
                 (
-                    member_id.clone(),
+                    member_id,
                     format!("* {} has entered the room", connected_member_name).into()
                 )
             )
@@ -227,10 +227,10 @@ impl Room {
         others
         .into_iter()
         .for_each(|member_id| {
-            if let Some(message_prefixed) = self.create_message_from_member(&except_member_id, message) {
+            if let Some(message_prefixed) = self.create_message_from_member(except_member_id, message) {
                 self.send_to_member.send(
                     (
-                        member_id.clone(),
+                        member_id,
                         message_prefixed
                     )
                 ).unwrap();

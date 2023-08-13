@@ -1,6 +1,6 @@
 use tokio::{net::TcpStream, io::{AsyncWriteExt, AsyncBufReadExt, BufReader}, select};
 use clap::Parser;
-use tracing::{info, debug, warn, trace, error};
+use tracing::{error};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Debug, Parser)]

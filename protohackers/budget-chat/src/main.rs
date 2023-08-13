@@ -1,9 +1,9 @@
-use std::{net::SocketAddr, sync::{Arc, Mutex}, time::Duration, io::Cursor, collections::HashMap};
-use tokio::{net::{TcpListener, TcpStream}, io::{AsyncReadExt, AsyncWriteExt, BufReader, AsyncBufReadExt}, sync::{mpsc::{UnboundedSender, UnboundedReceiver}, oneshot}, select, join};
+use std::{net::SocketAddr, sync::{Arc, Mutex}, collections::HashMap};
+use tokio::{net::{TcpListener, TcpStream}, sync::{mpsc::{UnboundedSender}}, select};
 // use budget_chat::{BudgetChatError, connection::Connection, room::Room, staging::Staging, MemberID};
 use budget_chat::{MemberID, room::{Room, Message}, staging::Staging, connection::Connection};
-use clap::{Parser, error};
-use tracing::{trace, debug, info, warn, error};
+use clap::{Parser};
+use tracing::{trace, debug, info, error};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use tokio::sync::mpsc;
 
@@ -143,7 +143,7 @@ pub async fn handle_client(
 
     // Whenever a client connects, we initiate the name-giving ceremony.
     let staging = Staging::new(
-        addr.clone(),
+        addr,
         outbound_tx.clone(),
         staging_messages_inbound_rx,
     );
