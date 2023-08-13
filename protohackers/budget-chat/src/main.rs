@@ -25,6 +25,22 @@ pub struct Args {
     port: u16,
 }
 
+#[tokio::main]
+async fn main() -> budget_chat::Result<()> {
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "budget_chat=info,tokio=debug".into()),
+        )
+        .with(tracing_subscriber::fmt::layer())
+        .init();
+
+    let args = Args::parse();
+    run_server(args.port).await.unwrap();
+    Ok(())
+}
+
+/// 
 pub async fn run_server(port: u16) -> budget_chat::Result<()> {
     let (message_received_from_member_tx, message_received_from_member_rx) =
         tokio::sync::mpsc::unbounded_channel();
@@ -37,6 +53,8 @@ pub async fn run_server(port: u16) -> budget_chat::Result<()> {
         Default::default();
 
     let outbound_peer_map_cp = outbound_peer_map.clone();
+    // Any outbound messages from the chat room need to be sent to the corresponding
+    // transport handle, so let's do that in background.
     tokio::task::spawn(async move {
         loop {
             match send_to_member_rx.recv().await {
@@ -53,12 +71,15 @@ pub async fn run_server(port: u16) -> budget_chat::Result<()> {
         }
     });
 
+    // Setup our Chat Room with the appropriate channels.
     let mut room = Room::new(
         message_received_from_member_rx,
         send_to_member_tx,
         client_disconnected_rx,
         client_connected_with_name_rx,
     );
+    // Drive our chat room in the background, so it only needs to wait for the members
+    // and messages to be thrown around in the channels.
     let room_handle = tokio::task::spawn(async move {
         room.run().await;
     });
@@ -67,6 +88,7 @@ pub async fn run_server(port: u16) -> budget_chat::Result<()> {
     let listener = TcpListener::bind(addr).await?;
     info!("Listening for connections on {}", listener.local_addr()?);
 
+    // Wait until the room as well as the main client loop is complete.
     let (room_result, client_loop_result) = tokio::join!(
         room_handle,
         client_loop(
@@ -84,6 +106,8 @@ pub async fn run_server(port: u16) -> budget_chat::Result<()> {
     Ok(())
 }
 
+/// Start listening for connections, and spawn individual
+/// client handlers.
 pub async fn client_loop(
     listener: TcpListener,
     message_recvd_from_member_tx: mpsc::UnboundedSender<(MemberID, Message)>,
@@ -119,6 +143,9 @@ pub async fn client_loop(
 }
 
 
+/// Try to complete the name-giving ceremony (aka "staging")
+/// for a TCP-connected peer and if everything goes okay, return the stream
+/// back as is, along with the name the peer chose.
 #[tracing::instrument(fields(kind = "staging"))]
 pub async fn stage_client(
     socket: TcpStream,
@@ -151,6 +178,7 @@ pub async fn stage_client(
     Ok((cleaned.to_string(), socket))
 }
 
+/// Check if the name is a non-empty ascii alphanumeric string.
 pub fn is_name_valid(name: &str) -> Option<&str> {
     let trimmed = name.trim();
     if trimmed.is_empty() {
@@ -162,6 +190,8 @@ pub fn is_name_valid(name: &str) -> Option<&str> {
     }
 }
 
+/// Given a raw socket, try to finish the name-giving of the peer,
+/// and if it goes fine, make a long running [Connection] out of it.
 #[tracing::instrument(skip_all, fields(addr, peer = %addr, name))]
 pub async fn handle_client(
     socket: TcpStream,
@@ -189,6 +219,8 @@ pub async fn handle_client(
     let (mut inbound_message_for_room_rx, on_disconnect_rx) = connection.subscribe();
     let connection_handle = tokio::task::spawn(connection.run());
 
+    // Once a named connection to the room is established,
+    // register this peer into a shared state.
     {
         let mut guard = outbound_peer_map.lock().unwrap();
         guard.insert(addr, outbound_tx);
@@ -198,14 +230,13 @@ pub async fn handle_client(
     client_connected_with_name_tx.send((addr, name)).unwrap();
 
     let listen_for_messages = tokio::task::spawn(async move {
+        // Propagate the individual messages received into the sink keyed by the
+        // peer addr.
         let send_messages = async move {
             loop {
-                match inbound_message_for_room_rx.recv().await {
-                    Some(message) => {
-                        trace!(message = %message, "Message from peer that will be forwarded to Room.");
-                        message_recvd_from_member_tx.send((addr, message)).unwrap();
-                    }
-                    None => {}
+                if let Some(message) = inbound_message_for_room_rx.recv().await {
+                    trace!(message = %message, "Message from peer that will be forwarded to Room.");
+                    message_recvd_from_member_tx.send((addr, message)).unwrap();
                 }
             }
         };
@@ -213,32 +244,19 @@ pub async fn handle_client(
             _ = send_messages => {
                 trace!("No more messages can be received from client.");
             },
+            // The connection just terminated for whatever reason.
             _ = on_disconnect_rx => {
                 trace!("Client disconnected while we were waiting on messages.");
                 {
                     let mut guard = outbound_peer_map.lock().unwrap();
                     guard.remove(&addr);
                 }
+                // Tell the chat room about it.
                 client_disconnected_tx.send(addr).unwrap();
             }
         }
     });
 
     _ = tokio::join!(listen_for_messages, connection_handle);
-    Ok(())
-}
-
-#[tokio::main]
-async fn main() -> budget_chat::Result<()> {
-    tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "budget_chat=info,tokio=debug".into()),
-        )
-        .with(tracing_subscriber::fmt::layer())
-        .init();
-
-    let args = Args::parse();
-    run_server(args.port).await.unwrap();
     Ok(())
 }
