@@ -3,58 +3,8 @@ use std::collections::HashMap;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
-#[derive(Debug, Clone)]
-pub enum Message {
-    Staging(String),
-    Chat(String),
-}
+pub type Message = String;
 
-impl<T> From<T> for Message
-where
-    T: AsRef<str>,
-{
-    fn from(value: T) -> Self {
-        Message::Chat(value.as_ref().to_string())
-    }
-}
-
-impl From<Message> for String {
-    fn from(value: Message) -> Self {
-        match value {
-            Message::Staging(message) => message,
-            Message::Chat(message) => message,
-        }
-    }
-}
-
-impl Message {
-    pub fn as_str(&self) -> &str {
-        match self {
-            Message::Staging(message) => message.as_str(),
-            Message::Chat(message) => message.as_str(),
-        }
-    }
-    pub fn is_staging(&self) -> bool {
-        matches!(self, Message::Staging(_))
-    }
-
-    pub fn new_of_kind<S: AsRef<str>>(text: S, other: &Message) -> Self {
-        match other {
-            Message::Staging(_) => Message::Staging(text.as_ref().to_string()),
-            Message::Chat(_) => Message::Chat(text.as_ref().to_string()),
-        }
-    }
-}
-
-impl core::fmt::Display for Message {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let props = match self {
-            Message::Staging(message) => format!("(kind=staging, message={})", message),
-            Message::Chat(message) => format!("(kind=chat, message={})", message),
-        };
-        write!(f, "{}", props)
-    }
-}
 
 #[derive(Debug)]
 pub struct Room {
@@ -172,18 +122,33 @@ impl Room {
         loop {
             tokio::select! {
                 Some((new_member, new_member_name)) = self.client_connected_with_name_rx.recv() => {
-                    info!("Client {} connected with name: {}", new_member, new_member_name);
+                    debug!("Client {} connected with name: {}", new_member, new_member_name);
+                    info!("* {} has entered the room.", new_member_name);
                     self.add_member(new_member, &new_member_name);
+                    info!(
+                        "* The room contains: {}, {}",
+                        new_member_name,
+                        self.member_names_except(&new_member).join(", ")
+                    );
                     self.notify_others_of_new_member(new_member);
                     self.notify_member_of_other_members(new_member);
-                    info!("After adding member and notifying: {:#?}", self.members);
+                    debug!("After adding member and notifying: {:#?}", self.members);
                 },
                 Some(disconnected_member) = self.client_disconnected_rx.recv() => {
-                    warn!("Recvd client_disconnected");
                     self.notify_others_of_disconnection(disconnected_member).await;
                     self.remove_member(disconnected_member);
+                    debug!("Recvd client_disconnected");
+                    info!(
+                        "* {:?} has left the room",
+                        self.get_name(&disconnected_member)
+                    );
                 },
                 Some((sender, msg)) = self.message_received_from_member.recv() => {
+                    info!(
+                        "[{:?}] {}",
+                        self.get_name(&sender),
+                        msg
+                    );
                     debug!("Received message from sender that will be broadcasted to others.");
                     self.broadcast_message_to_other_members_except(&sender, &msg);
                 }
@@ -246,4 +211,23 @@ impl Room {
     pub fn get_name(&self, member_id: &MemberID) -> Option<String> {
         self.members.get(member_id).cloned()
     }
+
+    fn members_except(&self, member_id: &MemberID) -> Vec<(MemberID, String)> {
+        self
+        .members
+        .iter()
+        .filter(|(stored_member_id, _)| {
+            *stored_member_id != member_id
+        })
+        .map(|(id, name)| (*id, name.clone()))
+        .collect()
+    }
+
+    fn member_names_except(&self, member_id: &MemberID) -> Vec<String> {
+        self.members_except(member_id)
+        .into_iter()
+        .map(|(_, name)| name.clone())
+        .collect()
+    }
+
 }

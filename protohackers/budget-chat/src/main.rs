@@ -6,18 +6,17 @@ use std::{
 use tokio::{
     net::{TcpListener, TcpStream},
     select,
-    sync::mpsc::UnboundedSender,
+    sync::mpsc::UnboundedSender, io::{BufReader, AsyncBufReadExt, AsyncWriteExt},
 };
 // use budget_chat::{BudgetChatError, connection::Connection, room::Room, staging::Staging, MemberID};
 use budget_chat::{
     connection::Connection,
     room::{Message, Room},
-    staging::Staging,
     MemberID,
 };
 use clap::Parser;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info, trace, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Debug, Parser)]
@@ -133,7 +132,51 @@ pub async fn client_loop(
     }
 }
 
-#[tracing::instrument(skip_all, fields(addr, peer = %addr))]
+
+#[tracing::instrument(fields(kind = "staging"))]
+pub async fn stage_client(
+    socket: TcpStream,
+    addr: MemberID
+) -> budget_chat::Result<(String, TcpStream)> {
+    let (read_half, mut write_half) = socket.into_split();
+    let reader = BufReader::new(read_half);
+    let mut lines = reader.lines();
+
+    // Try writing. If we fail, drop the client.
+    trace!("Requesting client for a name.");
+    write_half.write_all(b"Welcome to budgetchat! What shall I call you?\n").await?;
+
+    let Some(ref name) = lines.next_line().await? else {
+        warn!("Could not read line from client when we were expecting a name. Disconnecting.");
+        return Err(budget_chat::ClientInitializationError::ConnectionResetByClient.into());
+    };
+
+    trace!("Just read line: {}", name);
+    let Some(cleaned) = is_name_valid(name) else {
+        warn!(raw = %name, "Got invalid name. Disconnecting.");
+        return Err(budget_chat::ClientInitializationError::InvalidName(name.to_string()).into());
+    };
+
+    debug!(name = %cleaned, "Client name is valid.");
+
+    let read_half = lines.into_inner().into_inner();
+    let socket = read_half.reunite(write_half)?;
+
+    Ok((cleaned.to_string(), socket))
+}
+
+pub fn is_name_valid(name: &str) -> Option<&str> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    match trimmed.chars().all(|char| char.is_ascii_alphanumeric()) {
+        true => Some(trimmed),
+        false => None,
+    }
+}
+
+#[tracing::instrument(skip_all, fields(addr, peer = %addr, name))]
 pub async fn handle_client(
     socket: TcpStream,
     addr: MemberID,
@@ -142,46 +185,24 @@ pub async fn handle_client(
     client_disconnected_tx: mpsc::UnboundedSender<MemberID>,
     outbound_peer_map: Arc<Mutex<HashMap<SocketAddr, UnboundedSender<Message>>>>,
 ) -> budget_chat::Result<()> {
-    // Set up a connection with channels.
-    let (outbound_tx, outbound_rx) = mpsc::unbounded_channel();
-    let (shutdown_tx, shutdown_rx) = mpsc::unbounded_channel();
-    let connection = Connection::new(socket, outbound_rx, shutdown_rx);
 
-    let (staging_messages_inbound_rx, _disconnect_rx) = connection.subscribe();
-
-    // Whenever a client connects, we initiate the name-giving ceremony.
-    let staging = Staging::new(addr, outbound_tx.clone(), staging_messages_inbound_rx);
-
-    trace!("Waiting for connection.run() and staging.run() to complete for client.");
-    // Drive the connection and staging together so that we can do a name-giving ceremony.
-
-    // let x = tokio::select! {
-    //     connection_result = connection.run() => match connection_result {
-    //         Ok(conn) => {
-    //             Ok((Some(conn), None))
-    //         },
-    //         Err(err) => {
-    //             Ok((None, None))
-    //         }
-    //     },
-    //     maybe_name = staging.run() => {
-    //         let Ok(name) = maybe_name else {
-    //             error!("Failed to stage peer.");
-    //             return Ok((None, ));
-    //         };
-    //     }
-    // };
-    let (mut inbound_message_for_room_rx, on_disconnect_rx) = connection.subscribe();
-    let connection_handle = tokio::task::spawn(connection.run());
-
-    let Ok(name) = staging.run().await else {
-        if let Err(err) = shutdown_tx.send(()) {
-            error!("failed to send shutdown signal to connection: {}", err);
-        }
+    let Ok((name, socket)) = stage_client(socket, addr).await else {
+        error!("Staging failed for peer");
         return Ok(());
     };
+    
+    tracing::Span::current()
+    .record("name", &name);
 
-    debug!("Staging complete... Connecting member with Room.");
+    info!("Staging complete... Connecting member with Room.");
+
+    // We'll only call it a Connection after its been through staging.
+    // Set up a connection with channels.
+    let (outbound_tx, outbound_rx) = mpsc::unbounded_channel();
+    let connection = Connection::new(socket, outbound_rx);
+
+    let (mut inbound_message_for_room_rx, on_disconnect_rx) = connection.subscribe();
+    let connection_handle = tokio::task::spawn(connection.run());
 
     {
         let mut guard = outbound_peer_map.lock().unwrap();
