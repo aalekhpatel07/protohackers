@@ -175,8 +175,7 @@ pub async fn handle_client(
     let connection_handle = tokio::task::spawn(connection.run());
 
     let Ok(name) = staging.run().await else {
-        connection_handle.abort();
-        return Err(budget_chat::BudgetChatError::Initialization(budget_chat::ClientInitializationError::ConnectionResetByClient));
+        return Ok(());
     };
 
     debug!("Staging complete... Connecting member with Room.");
