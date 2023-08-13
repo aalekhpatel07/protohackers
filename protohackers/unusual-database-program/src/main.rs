@@ -86,10 +86,7 @@ async fn run_server(
     info!("Listening for datagrams on: {}", addr);
     loop {
         if let Ok((bytes_read, remote_addr)) = socket_recv.recv_from(&mut buf).await {
-            let mut contents = String::from_utf8_lossy(&buf[0..bytes_read]).to_string();
-            if let Some(contents_trimmed) = contents.strip_suffix('\n') {
-                contents = contents_trimmed.to_string();
-            }
+            let contents = String::from_utf8_lossy(&buf[0..bytes_read]).to_string();
             trace!(bytes_read = %bytes_read, contents = %contents, "Received data from peer.");
 
             let operation: Operation = contents.into();
