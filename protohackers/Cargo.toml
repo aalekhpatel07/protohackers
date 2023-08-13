@@ -3,6 +3,7 @@ members = [
   "echo-server",
   "prime-time",
   "budget-chat",
+  "unusual-database-program",
 ]
 
 [profile.release]
