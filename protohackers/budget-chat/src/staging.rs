@@ -1,24 +1,19 @@
-
 // use tokio::{sync::{mpsc, oneshot}, net::tcp::{OwnedWriteHalf, OwnedReadHalf}, io::{AsyncWriteExt, AsyncReadExt, BufReader, AsyncBufReadExt}};
 // use tracing::{debug_span, debug, error, trace};
 // use tokio::net::{TcpStream};
 // use crate::MemberID;
 
-
 use tokio::sync::mpsc;
 use tracing::{trace, warn};
 
-use crate::{MemberID, ClientInitializationError, room::Message};
-
-
-
+use crate::{room::Message, ClientInitializationError, MemberID};
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum Membership {
     #[default]
     Candidate,
     NameRequested,
-    Member(String)
+    Member(String),
 }
 
 /// We'll have a staging area for every member.
@@ -30,13 +25,11 @@ pub struct Staging {
     pub membership: Membership,
 }
 
-
 impl Staging {
-
     pub fn new(
-        potential_peer_id: MemberID, 
-        send_to_member_tx: mpsc::UnboundedSender<Message>, 
-        recvd_from_member_rx: mpsc::UnboundedReceiver<Message>, 
+        potential_peer_id: MemberID,
+        send_to_member_tx: mpsc::UnboundedSender<Message>,
+        recvd_from_member_rx: mpsc::UnboundedReceiver<Message>,
     ) -> Self {
         Self {
             potential_peer_id,
@@ -60,7 +53,7 @@ impl Staging {
                     trace!("Requesting name to potential member.");
                     self.request_name();
                     self.membership = Membership::NameRequested;
-                },
+                }
                 Membership::NameRequested => {
                     trace!("Waiting to receive name from member");
                     let Some(message) = self.recvd_from_member_rx.recv().await else {
@@ -75,7 +68,7 @@ impl Staging {
                     };
                     trace!(cleaned = %cleaned, "Name validation complete for member...");
                     self.membership = Membership::Member(cleaned.to_string());
-                },
+                }
                 Membership::Member(name) => {
                     trace!("Member sign up successful. Notifying staging is complete.");
                     return Ok(name);
@@ -100,15 +93,9 @@ impl Staging {
         if trimmed.is_empty() {
             return None;
         }
-        match trimmed
-        .chars()
-        .all(|char| {
-            char.is_ascii_alphanumeric()
-        }) {
-            true => {
-                Some(trimmed)
-            },
-            false => None
+        match trimmed.chars().all(|char| char.is_ascii_alphanumeric()) {
+            true => Some(trimmed),
+            false => None,
         }
     }
 }

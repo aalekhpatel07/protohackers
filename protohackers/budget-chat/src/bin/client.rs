@@ -1,6 +1,10 @@
-use tokio::{net::TcpStream, io::{AsyncWriteExt, AsyncBufReadExt, BufReader}, select};
 use clap::Parser;
-use tracing::{error};
+use tokio::{
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    net::TcpStream,
+    select,
+};
+use tracing::error;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Debug, Parser)]
@@ -8,19 +12,18 @@ pub struct Args {
     #[clap(short = 'p', long, default_value_t = 12003)]
     server_port: u16,
     #[clap(short = 'u', long, default_value_t = String::from("localhost"))]
-    server_url: String
+    server_url: String,
 }
-
 
 #[tokio::main]
 pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::registry()
-    .with(
-        tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| "client=trace,budget_chat=trace,tokio=debug".into()),
-    )
-    .with(tracing_subscriber::fmt::layer())
-    .init();
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "client=trace,budget_chat=trace,tokio=debug".into()),
+        )
+        .with(tracing_subscriber::fmt::layer())
+        .init();
     let args = Args::parse();
 
     let stream = TcpStream::connect((args.server_url, args.server_port)).await?;

@@ -6,9 +6,6 @@
 // use crate::room::{Message};
 // use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-
-
-
 // #[derive(Debug)]
 // pub struct Member {
 //     read_half: OwnedReadHalf,
@@ -31,7 +28,7 @@
 
 // impl Member {
 //     pub fn new(
-//         read_half: OwnedReadHalf, 
+//         read_half: OwnedReadHalf,
 //         write_half: OwnedWriteHalf,
 //         disconnected_tx: mpsc::UnboundedSender<MemberID>,
 //         send_to_others_tx: mpsc::UnboundedSender<(MemberID, Message)>
@@ -62,7 +59,6 @@
 //             false => None
 //         }
 //     }
-
 
 //     pub fn name(&self) -> Option<&str> {
 //         match self.membership {

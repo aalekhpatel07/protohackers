@@ -1,17 +1,17 @@
-use std::{collections::HashMap};
-use tokio::sync::mpsc;
-use tracing::{warn, info, debug, error};
 use crate::MemberID;
+use std::collections::HashMap;
+use tokio::sync::mpsc;
+use tracing::{debug, error, info, warn};
 
 #[derive(Debug, Clone)]
 pub enum Message {
     Staging(String),
-    Chat(String)
+    Chat(String),
 }
 
-impl<T> From<T> for Message 
+impl<T> From<T> for Message
 where
-    T: AsRef<str>
+    T: AsRef<str>,
 {
     fn from(value: T) -> Self {
         Message::Chat(value.as_ref().to_string())
@@ -22,7 +22,7 @@ impl From<Message> for String {
     fn from(value: Message) -> Self {
         match value {
             Message::Staging(message) => message,
-            Message::Chat(message) => message
+            Message::Chat(message) => message,
         }
     }
 }
@@ -31,7 +31,7 @@ impl Message {
     pub fn as_str(&self) -> &str {
         match self {
             Message::Staging(message) => message.as_str(),
-            Message::Chat(message) => message.as_str()
+            Message::Chat(message) => message.as_str(),
         }
     }
     pub fn is_staging(&self) -> bool {
@@ -41,22 +41,20 @@ impl Message {
     pub fn new_of_kind<S: AsRef<str>>(text: S, other: &Message) -> Self {
         match other {
             Message::Staging(_) => Message::Staging(text.as_ref().to_string()),
-            Message::Chat(_) => Message::Chat(text.as_ref().to_string())
+            Message::Chat(_) => Message::Chat(text.as_ref().to_string()),
         }
     }
-
 }
 
 impl core::fmt::Display for Message {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let props = match self {
             Message::Staging(message) => format!("(kind=staging, message={})", message),
-            Message::Chat(message) => format!("(kind=chat, message={})", message)
+            Message::Chat(message) => format!("(kind=chat, message={})", message),
         };
         write!(f, "{}", props)
     }
 }
-
 
 #[derive(Debug)]
 pub struct Room {
@@ -76,14 +74,13 @@ pub struct Room {
     client_connected_with_name_rx: mpsc::UnboundedReceiver<(MemberID, String)>,
 }
 
-
 impl Room {
     #[tracing::instrument(skip_all)]
     pub fn new(
         message_received_from_member: mpsc::UnboundedReceiver<(MemberID, Message)>,
         send_to_member: mpsc::UnboundedSender<(MemberID, Message)>,
         client_disconnected_rx: mpsc::UnboundedReceiver<MemberID>,
-        client_connected_with_name_rx: mpsc::UnboundedReceiver<(MemberID, String)>
+        client_connected_with_name_rx: mpsc::UnboundedReceiver<(MemberID, String)>,
     ) -> Self {
         Self {
             message_received_from_member,
@@ -102,19 +99,17 @@ impl Room {
             return;
         };
 
-        self
-        .members
-        .keys()
-        .filter(|&member_id| *member_id != disconnected_member)
-        .for_each(|member_id| {
-            self.send_to_member.send(
-                (
-                    *member_id, 
-                    format!("* {} has left the room", disconnected_member_name).into()
-                )
-            )
-            .unwrap();
-        });
+        self.members
+            .keys()
+            .filter(|&member_id| *member_id != disconnected_member)
+            .for_each(|member_id| {
+                self.send_to_member
+                    .send((
+                        *member_id,
+                        format!("* {} has left the room", disconnected_member_name).into(),
+                    ))
+                    .unwrap();
+            });
     }
 
     /// Given the member_id just connected (after finding a right name), send messages to everyone else
@@ -125,8 +120,7 @@ impl Room {
             error!("Don't know who to notify about...");
             return;
         };
-        let others = 
-            self
+        let others = self
             .members
             .keys()
             .filter(|&member_id| *member_id != connected_member)
@@ -140,30 +134,24 @@ impl Room {
             "Notifying others of new member",
         );
 
-        others
-        .into_iter()
-        .for_each(|member_id| {
-            self.send_to_member.send(
-                (
+        others.into_iter().for_each(|member_id| {
+            self.send_to_member
+                .send((
                     member_id,
-                    format!("* {} has entered the room", connected_member_name).into()
-                )
-            )
-            .unwrap();
+                    format!("* {} has entered the room", connected_member_name).into(),
+                ))
+                .unwrap();
         });
     }
 
     #[tracing::instrument(skip(self))]
     pub fn notify_member_of_other_members(&self, newly_connected_member: MemberID) {
-
-
-        let existing_member_names: Vec<_> = 
-        self
-        .members
-        .keys()
-        .filter(|&member_id| *member_id != newly_connected_member)
-        .filter_map(|member_id| self.get_name(member_id))
-        .collect();
+        let existing_member_names: Vec<_> = self
+            .members
+            .keys()
+            .filter(|&member_id| *member_id != newly_connected_member)
+            .filter_map(|member_id| self.get_name(member_id))
+            .collect();
         let message = format!("* The room contains: {}", existing_member_names.join(", "));
 
         debug!(
@@ -173,7 +161,9 @@ impl Room {
             message = %message,
             "Notifying connected member of the existing members",
         );
-        self.send_to_member.send((newly_connected_member, message.into())).unwrap();
+        self.send_to_member
+            .send((newly_connected_member, message.into()))
+            .unwrap();
     }
 
     #[tracing::instrument(skip(self), fields(self.members = ?self.members))]
@@ -203,13 +193,11 @@ impl Room {
 
     #[tracing::instrument(skip(self))]
     pub fn broadcast_message_to_other_members_except(
-        &self, 
-        except_member_id: &MemberID, 
-        message: &Message
+        &self,
+        except_member_id: &MemberID,
+        message: &Message,
     ) {
-
-        let others: Vec<_> = 
-            self
+        let others: Vec<_> = self
             .members
             .keys()
             .filter(|&member_id| member_id != except_member_id)
@@ -223,30 +211,26 @@ impl Room {
             "Broadcasting message to other members except",
         );
 
-
-        others
-        .into_iter()
-        .for_each(|member_id| {
-            if let Some(message_prefixed) = self.create_message_from_member(except_member_id, message) {
-                self.send_to_member.send(
-                    (
-                        member_id,
-                        message_prefixed
-                    )
-                ).unwrap();
+        others.into_iter().for_each(|member_id| {
+            if let Some(message_prefixed) =
+                self.create_message_from_member(except_member_id, message)
+            {
+                self.send_to_member
+                    .send((member_id, message_prefixed))
+                    .unwrap();
             }
         });
     }
 
     #[tracing::instrument(skip(self))]
-    pub fn create_message_from_member(&self, member_id: &MemberID, message: &Message) -> Option<Message> {
-        self
-        .get_name(member_id)
-        .map(|member_name| {
-            format!("[{}] {}", member_name, message.as_str().trim()).into()
-        })
+    pub fn create_message_from_member(
+        &self,
+        member_id: &MemberID,
+        message: &Message,
+    ) -> Option<Message> {
+        self.get_name(member_id)
+            .map(|member_name| format!("[{}] {}", member_name, message.as_str().trim()).into())
     }
-
 
     #[tracing::instrument(skip(self))]
     pub fn add_member(&mut self, member_id: MemberID, member_name: &str) {
@@ -262,5 +246,4 @@ impl Room {
     pub fn get_name(&self, member_id: &MemberID) -> Option<String> {
         self.members.get(member_id).cloned()
     }
-
 }

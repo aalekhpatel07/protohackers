@@ -1,7 +1,4 @@
-
-
 use thiserror::Error;
-
 
 #[derive(Debug, Error)]
 pub enum BudgetChatError {
@@ -14,7 +11,7 @@ pub enum BudgetChatError {
     #[error("Member (id: {0}) is not known")]
     UnknownMember(String),
     #[error("No messages to read...")]
-    NoMsgsToRead
+    NoMsgsToRead,
 }
 
 /// Any error at initialization warrants a disconnection.
@@ -23,8 +20,7 @@ pub enum ClientInitializationError {
     #[error("Client provided bad name: {0}")]
     InvalidName(String),
     #[error("Connection was reset by the client...")]
-    ConnectionResetByClient
+    ConnectionResetByClient,
 }
 
-
-pub type Result<T, E=BudgetChatError> = core::result::Result<T, E>;
+pub type Result<T, E = BudgetChatError> = core::result::Result<T, E>;

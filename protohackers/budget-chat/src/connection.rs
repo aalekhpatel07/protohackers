@@ -1,9 +1,20 @@
-use std::{net::SocketAddr, sync::{Arc, Mutex, atomic::AtomicBool}};
-use tracing::{error, warn, trace};
-use tokio::{net::TcpStream, sync::{oneshot::{self, Receiver}, mpsc::UnboundedReceiver, mpsc::UnboundedSender}, select, io::{BufReader, AsyncBufReadExt, AsyncWriteExt}};
+use std::{
+    net::SocketAddr,
+    sync::{atomic::AtomicBool, Arc, Mutex},
+};
+use tokio::{
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    net::TcpStream,
+    select,
+    sync::{
+        mpsc::UnboundedReceiver,
+        mpsc::UnboundedSender,
+        oneshot::{self, Receiver},
+    },
+};
+use tracing::{error, trace, warn};
 
-use crate::room::{Message};
-
+use crate::room::Message;
 
 #[derive(Debug)]
 pub struct Connection {
@@ -15,12 +26,8 @@ pub struct Connection {
     staging_message_received: AtomicBool,
 }
 
-
 impl Connection {
-    pub fn new(
-        stream: TcpStream, 
-        outbound_message_rx: UnboundedReceiver<Message>,
-    ) -> Self {
+    pub fn new(stream: TcpStream, outbound_message_rx: UnboundedReceiver<Message>) -> Self {
         let remote_address = stream.peer_addr().unwrap();
         Self {
             stream,
@@ -28,7 +35,7 @@ impl Connection {
             inbound_message_subscribers: Default::default(),
             outbound_message_rx,
             staging_message_sent: AtomicBool::new(false),
-            staging_message_received: AtomicBool::new(false)
+            staging_message_received: AtomicBool::new(false),
         }
     }
 
@@ -44,12 +51,14 @@ impl Connection {
 
     #[tracing::instrument(skip_all, fields(message))]
     fn notify_subscribers(
-        inbound_message_subscribers: Arc<Mutex<Vec<(UnboundedSender<Message>, oneshot::Sender<()>)>>>, 
-        message: &Message
+        inbound_message_subscribers: Arc<
+            Mutex<Vec<(UnboundedSender<Message>, oneshot::Sender<()>)>>,
+        >,
+        message: &Message,
     ) {
         let mut guard = inbound_message_subscribers.lock().unwrap();
         let mut stale_subscribers = vec![];
-        
+
         for (index, (subscriber, _)) in guard.iter().enumerate() {
             if let Err(err) = subscriber.send(message.clone()) {
                 error!("Found a subscriber that we couldn't send a message to. Dropping the sender: {}", err);
@@ -72,7 +81,9 @@ impl Connection {
     }
 
     fn notify_subscribers_of_failure(
-        inbound_message_subscribers: Arc<Mutex<Vec<(UnboundedSender<Message>, oneshot::Sender<()>)>>>
+        inbound_message_subscribers: Arc<
+            Mutex<Vec<(UnboundedSender<Message>, oneshot::Sender<()>)>>,
+        >,
     ) {
         let mut guard = inbound_message_subscribers.lock().unwrap();
         for index in (0..guard.len()).rev() {
@@ -84,7 +95,6 @@ impl Connection {
     }
 
     pub async fn run(self) -> crate::Result<()> {
-
         let (read_half, mut write_half) = self.stream.into_split();
         let subscribers = self.inbound_message_subscribers.clone();
         let mut outbound_message_rx = self.outbound_message_rx;
