@@ -11,7 +11,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use lazy_static::lazy_static;
 
 lazy_static! {
-    pub static ref BOGUSCOIN_REGEX: regex::Regex = regex::Regex::new(r#"\b7\w{26,35}\b"#).unwrap();
+    pub static ref BOGUSCOIN_REGEX: fancy_regex::Regex = fancy_regex::Regex::new(r#"\b7[a-zA-Z0-9]{25,34}\b(?![^\s].*)\b"#).unwrap();
 }
 
 #[derive(Debug)]
@@ -24,9 +24,8 @@ struct ProxyBudgetChat {
 impl ProxyBudgetChat {
     const BOGUSCOIN_ADDRESS: &'static str = "7YWHMfk9JZe0LM0g1ZauHuiSxhI";
 
-    #[tracing::instrument]
     pub fn transform_message(message: &str) -> String {
-        debug!("transforming message raw: {:?}", message);
+        info!("before transformation: {}", message);
         let skip_chars: isize = message.find("] ").map(|x| x as isize).unwrap_or(-1) + 1;
         let mut msg = message.to_string();
 
@@ -39,7 +38,7 @@ impl ProxyBudgetChat {
         trace!("transformed cleaned: {}", replaced);
 
         let joined = format!("{}{}", prefix_to_keep, replaced);
-        debug!("transformed: {}", joined);
+        info!("after transformation: {}", joined);
 
         joined
     }
