@@ -1,7 +1,7 @@
 use std::net::{SocketAddr};
-use tracing::{debug, error, info, trace};
+use tracing::{debug, trace};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-use tokio::{sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel}, net::{TcpListener, TcpStream}, select, io::{BufReader, AsyncBufReadExt, AsyncWriteExt, stdin, Stdout, stdout}};
+use tokio::{sync::mpsc::{UnboundedReceiver, UnboundedSender}, net::{TcpListener, TcpStream}, select, io::{BufReader, AsyncBufReadExt, AsyncWriteExt}};
 
 use lazy_static::lazy_static;
 
@@ -30,7 +30,7 @@ impl ProxyBudgetChat {
         let (prefix_to_keep, message_to_transform) = msg.split_at_mut(skip_chars as usize);
         trace!("transforming message cleaned: {:?}", message_to_transform);
 
-        let replaced = BOGUSCOIN_REGEX.replace_all(&message_to_transform, Self::BOGUSCOIN_ADDRESS).to_string();
+        let replaced = BOGUSCOIN_REGEX.replace_all(message_to_transform, Self::BOGUSCOIN_ADDRESS).to_string();
         trace!("transformed cleaned: {}", replaced);
 
         let joined = format!("{}{}", prefix_to_keep, replaced);
@@ -40,7 +40,7 @@ impl ProxyBudgetChat {
     }
 
     fn is_chat_message(message: &str) -> bool {
-        message.starts_with("[")
+        message.starts_with('[')
     }
 
     pub async fn run(&mut self) -> Result<()> {
@@ -63,7 +63,7 @@ impl ProxyBudgetChat {
                     Ok(None) => {
                         break;
                     },
-                    Err(err) => {
+                    Err(_err) => {
                         break;
                     }
                 },
@@ -121,7 +121,7 @@ pub async fn handle_client(
                     Ok(None) => {
                         break;
                     },
-                    Err(err) => {
+                    Err(_err) => {
                         break;
                     }
                 },
