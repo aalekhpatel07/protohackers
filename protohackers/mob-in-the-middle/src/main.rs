@@ -1,13 +1,14 @@
 use std::net::{SocketAddr};
 use tracing::{debug, error, info, trace};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-use tokio::{sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel}, net::{TcpListener, TcpStream}, select, io::{BufReader, AsyncBufReadExt, AsyncWriteExt, stdin}};
+use tokio::{sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel}, net::{TcpListener, TcpStream}, select, io::{BufReader, AsyncBufReadExt, AsyncWriteExt, stdin, Stdout, stdout}};
 
 
-
+#[derive(Debug)]
 struct ProxyBudgetChat {
     outbound_message_rx: UnboundedReceiver<String>,
-    inbound_message_tx: UnboundedSender<String>
+    inbound_message_tx: UnboundedSender<String>,
+    name_ceremony_complete: bool,
 }
 
 impl ProxyBudgetChat {
@@ -15,7 +16,12 @@ impl ProxyBudgetChat {
     const BOGUSCOIN_ADDRESS: &'static str = "7YWHMfk9JZe0LM0g1ZauHuiSxhI";
 
     pub fn transform_message(message: &str) -> String {
+        println!("transforming message {}", message);
         message.into()
+    }
+
+    fn is_chat_message(message: &str) -> bool {
+        message.starts_with("[")
     }
 
     pub async fn run(&mut self) -> Result<()> {
@@ -29,20 +35,27 @@ impl ProxyBudgetChat {
         loop {
             select! {
                 line = lines.next_line() => match line {
-                    Ok(Some(line)) => {
-
+                    Ok(Some(mut line)) => {
+                        if self.name_ceremony_complete && Self::is_chat_message(&line) {
+                            line = Self::transform_message(&line);
+                        }
+                        self.inbound_message_tx.send(line).unwrap();
                     },
                     Ok(None) => {
-
+                        break;
                     },
                     Err(err) => {
-
+                        break;
                     }
                 },
                 message = self.outbound_message_rx.recv() => match message {
-                    Some(message) => {
+                    Some(mut message) => {
+                        if self.name_ceremony_complete {
+                            message = Self::transform_message(&message);
+                        }
                         writer_half.write_all(message.as_bytes()).await?;
                         writer_half.write_all(b"\n").await?;
+                        self.name_ceremony_complete = true;
                     },
                     None => {
                         break;
@@ -62,32 +75,61 @@ pub async fn run_server(port: u16) -> Result<()> {
     let addr: SocketAddr = ([0; 8], port).into();
     let listener = TcpListener::bind(addr).await.unwrap();
     loop {
-        let (socket, peer) = listener.accept().await.unwrap();
-        tokio::task::spawn(async move { handle_client(socket, peer).await });
+        let (socket, _) = listener.accept().await.unwrap();
+        tokio::task::spawn(async move { handle_client(socket).await });
     }
 
 }
 
 pub async fn handle_client(
     socket: TcpStream,
-    peer: SocketAddr
 ) -> Result<()> {
 
-    let (inbound_tx, inbound_rx) = tokio::sync::mpsc::unbounded_channel();
-    let (outbound_tx, outbound_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (messages_from_client_tx, messages_from_client_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (messages_to_client_tx, mut messages_to_client_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
 
-    let stdin = stdin();
-    let stdin_reader = BufReader::new(stdin);
-    let mut lines_from_stdin = stdin_reader.lines();
+    let (reader_half, mut writer_half) = socket.into_split();
+    let reader = BufReader::new(reader_half);
+    let mut lines_from_client = reader.lines();
 
-    tokio::task::spawn(async move {
-        while let Ok(Some(line)) = lines_from_stdin.next_line().await {
-            outbound_tx.send(line);
+    let t1 = tokio::task::spawn(async move {
+        loop {
+            select! {
+                line = lines_from_client.next_line() => match line {
+                    Ok(Some(line)) => {
+                        messages_from_client_tx.send(line).unwrap();
+                    },
+                    Ok(None) => {
+                        break;
+                    },
+                    Err(err) => {
+                        break;
+                    }
+                },
+                message = messages_to_client_rx.recv() => match message {
+                    Some(message) => {
+                        let Ok(_) = writer_half.write_all(message.as_bytes()).await else {
+                            break;
+                        };
+                        let Ok(_) = writer_half.write_all(b"\n").await else {
+                            break;
+                        };
+                    },
+                    None => {
+                        break;
+                    }
+                }
+            }
         }
     });
 
+    let mut proxy = ProxyBudgetChat { 
+        outbound_message_rx: messages_from_client_rx, 
+        inbound_message_tx: messages_to_client_tx,
+        name_ceremony_complete: false,
+    };
 
-    let proxy = ProxyBudgetChat { outbound_message_rx: outbound_rx, inbound_message_tx: inbound_tx };
+    _ = tokio::join!(proxy.run(), t1);
 
     Ok(())
 }
@@ -104,4 +146,5 @@ async fn main() {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
+    run_server(12003).await.unwrap();
 }
