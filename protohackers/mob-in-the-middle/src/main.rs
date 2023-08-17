@@ -47,6 +47,10 @@ impl ProxyBudgetChat {
         message.starts_with('[')
     }
 
+    fn is_server_message(message: &str) -> bool {
+        message.starts_with('*')
+    }
+
     pub async fn run(&mut self) -> Result<()> {
         let stream = TcpStream::connect("chat.protohackers.com:16963").await?;
         let (reader_half, mut writer_half) = stream.into_split();
@@ -58,6 +62,10 @@ impl ProxyBudgetChat {
             select! {
                 line = lines.next_line() => match line {
                     Ok(Some(mut line)) => {
+                        if !Self::is_chat_message(&line) && !Self::is_server_message(&line) && !line.starts_with("Welcome") {
+                            self.inbound_message_tx.send(line).unwrap();
+                            break;
+                        }
                         if self.name_ceremony_complete && Self::is_chat_message(&line) {
                             line = Self::transform_message(&line);
                         }
@@ -134,6 +142,9 @@ pub async fn handle_client(socket: TcpStream) -> Result<()> {
                         let Ok(_) = writer_half.write_all(b"\n").await else {
                             break;
                         };
+                        if !message.starts_with('*') && !message.starts_with('[') && !message.starts_with("Welcome") {
+                            break;
+                        }
                     },
                     None => {
                         break;
