@@ -5,7 +5,7 @@ use tokio::{
     select,
     sync::mpsc::{UnboundedReceiver, UnboundedSender},
 };
-use tracing::{debug, trace};
+use tracing::{debug, trace, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use lazy_static::lazy_static;
@@ -96,8 +96,10 @@ pub type Result<T, E = Box<dyn std::error::Error + Send + Sync + 'static>> =
 pub async fn run_server(port: u16) -> Result<()> {
     let addr: SocketAddr = ([0; 8], port).into();
     let listener = TcpListener::bind(addr).await.unwrap();
+    info!("Listening for connections on {}", addr);
     loop {
-        let (socket, _) = listener.accept().await.unwrap();
+        let (socket, peer) = listener.accept().await.unwrap();
+        info!("Accepted connection from: {}", peer);
         tokio::task::spawn(async move { handle_client(socket).await });
     }
 }
@@ -148,7 +150,13 @@ pub async fn handle_client(socket: TcpStream) -> Result<()> {
         name_ceremony_complete: false,
     };
 
-    _ = tokio::join!(proxy.run(), t1);
+    let (proxy_res, real_res) = tokio::join!(proxy.run(), t1);
+    if let Err(err) = proxy_res {
+        tracing::error!("Proxy error: {}", err);
+    }
+    if let Err(err) = real_res {
+        tracing::error!("Real error: {}", err);
+    }
 
     Ok(())
 }
