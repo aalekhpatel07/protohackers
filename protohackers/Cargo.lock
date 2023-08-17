@@ -421,6 +421,8 @@ dependencies = [
 name = "mob-in-the-middle"
 version = "0.1.0"
 dependencies = [
+ "lazy_static",
+ "regex",
  "tokio",
  "tracing",
  "tracing-subscriber",

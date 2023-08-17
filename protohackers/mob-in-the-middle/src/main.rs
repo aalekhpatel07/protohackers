@@ -3,6 +3,12 @@ use tracing::{debug, error, info, trace};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use tokio::{sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel}, net::{TcpListener, TcpStream}, select, io::{BufReader, AsyncBufReadExt, AsyncWriteExt, stdin, Stdout, stdout}};
 
+use lazy_static::lazy_static;
+
+lazy_static! {
+    pub static ref BOGUSCOIN_REGEX: regex::Regex = regex::Regex::new(r#"\b7\w{26,35}\b"#).unwrap();
+}
+
 
 #[derive(Debug)]
 struct ProxyBudgetChat {
@@ -15,9 +21,22 @@ impl ProxyBudgetChat {
 
     const BOGUSCOIN_ADDRESS: &'static str = "7YWHMfk9JZe0LM0g1ZauHuiSxhI";
 
+    #[tracing::instrument]
     pub fn transform_message(message: &str) -> String {
-        println!("transforming message {}", message);
-        message.into()
+        debug!("transforming message raw: {:?}", message);
+        let skip_chars: isize = message.find("] ").map(|x| x as isize).unwrap_or(-1) + 1;
+        let mut msg = message.to_string();
+
+        let (prefix_to_keep, message_to_transform) = msg.split_at_mut(skip_chars as usize);
+        trace!("transforming message cleaned: {:?}", message_to_transform);
+
+        let replaced = BOGUSCOIN_REGEX.replace_all(&message_to_transform, Self::BOGUSCOIN_ADDRESS).to_string();
+        trace!("transformed cleaned: {}", replaced);
+
+        let joined = format!("{}{}", prefix_to_keep, replaced);
+        debug!("transformed: {}", joined);
+
+        joined
     }
 
     fn is_chat_message(message: &str) -> bool {
@@ -141,7 +160,7 @@ async fn main() {
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "mob_in_the_middle=info,tokio=debug".into()),
+                .unwrap_or_else(|_| "mob_in_the_middle=trace,tokio=debug".into()),
         )
         .with(tracing_subscriber::fmt::layer())
         .init();
