@@ -5,6 +5,7 @@ members = [
   "budget-chat",
   "unusual-database-program",
   "mob-in-the-middle",
+  "job-centre",
 ]
 
 [profile.release]
