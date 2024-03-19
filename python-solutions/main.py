@@ -4,24 +4,47 @@ import argparse
 import asyncio
 import structlog
 import logging
-
-from solutions.speed_daemon.connection_manager import ConnectionManager
+from solutions.speed_daemon.app import App as SpeedDaemon
+from structlog.typing import EventDict, WrappedLogger
 
 
 logger = structlog.get_logger(__name__)
+
+
+class LogJump:
+
+    def __call__(
+        self, _logger: WrappedLogger, name: str, event_dict: EventDict
+    ) -> EventDict:
+        file_part = event_dict.pop("filename")
+        line_no = event_dict.pop("lineno")
+        event_dict["location"] = f'"{file_part}:{line_no}"'
+
+        return event_dict
 
 
 def set_up_structlog():
     structlog.configure(
         processors=[
             structlog.contextvars.merge_contextvars,
-            structlog.processors.add_log_level,
+            structlog.stdlib.add_log_level,
             structlog.processors.StackInfoRenderer(),
             structlog.dev.set_exc_info,
-            structlog.processors.TimeStamper(fmt="%Y-%m-%d %H:%M:%S", utc=False),
-            structlog.dev.ConsoleRenderer()
+            structlog.processors.TimeStamper(fmt="%Y-%m-%d %H:%M.%S", utc=False),
+            structlog.processors.CallsiteParameterAdder(
+                [
+                    # add either pathname or filename and then set full_path to True or False in LogJump below
+                    # structlog.processors.CallsiteParameter.PATHNAME,
+                    structlog.processors.CallsiteParameter.FILENAME,
+                    structlog.processors.CallsiteParameter.LINENO,
+                    structlog.processors.CallsiteParameter.FUNC_NAME,
+                    structlog.processors.CallsiteParameter.MODULE,
+                ],
+            ),
+            LogJump(),
+            structlog.dev.ConsoleRenderer(),
         ],
-        wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
+        wrapper_class=structlog.make_filtering_bound_logger(logging.NOTSET),
         context_class=dict,
         logger_factory=structlog.PrintLoggerFactory(),
         cache_logger_on_first_use=False
@@ -30,7 +53,7 @@ def set_up_structlog():
 
 
 SOLUTIONS = {
-    "speed_daemon": lambda: ConnectionManager(),
+    "speed_daemon": lambda: SpeedDaemon(),
 }
 
 
@@ -38,7 +61,7 @@ def add_arguments(parser: argparse.ArgumentParser):
     parser.add_argument(
         "--port",
         type=int,
-        default=9000,
+        default=8300,
         help="The port to bind for this server."
     )
     parser.add_argument(
@@ -69,7 +92,7 @@ async def start_server(cb, port):
         await server.serve_forever()
 
 
-def main():
+async def main():
     parser = argparse.ArgumentParser(
         description="Run TCP servers for protohackers.com"
     )
@@ -77,33 +100,23 @@ def main():
     opts = parser.parse_args()
     set_up_structlog()
 
-    # structlog.get_logger("speed_daemon", level=logging.INFO)
+    # # structlog.get_logger("common", level=logging.CRITICAL)
+    # # structlog.get_logger("common.server", level=logging.DEBUG)
+    # structlog.get_logger("speed_daemon", level=logging.DEBUG)
 
     logger.info(
         f"Options for {opts.problem}",
         **opts.__dict__
     )
-    actual_handler = SOLUTIONS[opts.problem]().handle_connection
+    app = SOLUTIONS[opts.problem]()
+    async with asyncio.TaskGroup() as tg:
+        app_run = tg.create_task(app.run())
+        handle_connection = tg.create_task(start_server(app.server.handle_connection, opts.port))
 
-    async def _guarded_cb(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
-        addr, port = writer.get_extra_info('peername')
-        if opts.allowed_ips and addr not in opts.allowed_ips:
-            logger.warn(
-                f"Rejecting connection attempt from {addr!r} "
-                f"because it is not an allowed ip.",
-                allowed_ips=opts.allowed_ips
-            )
-            writer.close()
-            return await writer.wait_closed()
-        return await actual_handler(reader, writer)
-
-    asyncio.run(
-        start_server(
-            _guarded_cb,
-            opts.port,
-        )
+    logger.info(
+        f"TaskGroup completed:\n{app_run}\n{handle_connection}"
     )
 
-
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
+

@@ -1,0 +1,13 @@
+version: '3'
+services:
+  db:
+    image: postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: root
+      POSTGRES_PASSWORD: root
+      POSTGRES_DB: protohackers
+    volumes:
+      - ./databases/speed_daemon/0001_initial.sql:/docker-entrypoint-initdb.d/0001_speed_daemon_init.sql
+
