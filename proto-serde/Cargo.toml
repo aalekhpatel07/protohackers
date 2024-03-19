@@ -1,0 +1,10 @@
+[package]
+name = "proto-serde"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { version = "1.0.197", default-features = false }
+
+[dev-dependencies]
+serde = { version = "1.0.197", features = ["derive"] }
