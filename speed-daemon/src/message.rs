@@ -1,31 +1,35 @@
-use core::fmt;
-use std::str::{from_utf8_unchecked, FromStr};
 use arrayvec::ArrayString;
+use core::fmt;
 use eyre::eyre;
-use tokio_util::{bytes::{Buf, BufMut}, codec::{Decoder, Encoder}};
-
+use std::str::{from_utf8_unchecked, FromStr};
+use tokio_util::{
+    bytes::{Buf, BufMut},
+    codec::{Decoder, Encoder},
+};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct MessageCodec;
 
-
 type String = arrayvec::ArrayString<255>;
-
 
 impl Encoder<Message> for MessageCodec {
     type Error = eyre::Error;
 
-    fn encode(&mut self, item: Message, dst: &mut tokio_util::bytes::BytesMut) -> Result<(), Self::Error> {
+    fn encode(
+        &mut self,
+        item: Message,
+        dst: &mut tokio_util::bytes::BytesMut,
+    ) -> Result<(), Self::Error> {
         match item {
             Message::Error(data) => {
                 dst.put_u8(0x10);
                 dst.put_str(&data.message)?;
-            },
+            }
             Message::Plate(data) => {
                 dst.put_u8(0x20);
                 dst.put_str(&data.plate)?;
                 dst.put_u32(data.timestamp);
-            },
+            }
             Message::Ticket(data) => {
                 dst.put_u8(0x21);
                 dst.put_str(&data.plate)?;
@@ -36,38 +40,40 @@ impl Encoder<Message> for MessageCodec {
                 dst.put_u16(data.mile2);
                 dst.put_u32(data.timestamp2);
                 dst.put_u16(data.speed);
-            },
+            }
             Message::WantHeartbeat(data) => {
                 dst.put_u8(0x40);
                 dst.put_u32(data.interval);
-            },
+            }
             Message::Heartbeat(_) => {
                 dst.put_u8(0x41);
-            },
+            }
             Message::IAmCamera(data) => {
                 dst.reserve(7);
                 dst.put_u8(0x80);
                 dst.put_u16(data.road);
                 dst.put_u16(data.mile);
                 dst.put_u16(data.limit);
-            },
+            }
             Message::IAmDispatcher(data) => {
                 dst.reserve(2 + data.roads.len() * 2);
                 dst.put_u8(0x81);
                 dst.put_u8(data.num_roads);
                 dst.extend(data.roads.iter().flat_map(|&road| road.to_be_bytes()))
-            },
+            }
         }
         Ok(())
     }
 }
 
-
 impl Decoder for MessageCodec {
     type Item = Message;
     type Error = eyre::Error;
 
-    fn decode(&mut self, src: &mut tokio_util::bytes::BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+    fn decode(
+        &mut self,
+        src: &mut tokio_util::bytes::BytesMut,
+    ) -> Result<Option<Self::Item>, Self::Error> {
         if src.is_empty() {
             // no header byte to parse a message.
             return Ok(None);
@@ -91,7 +97,7 @@ impl Decoder for MessageCodec {
 
                 let message = Message::Error(Error { message: error_str });
                 Ok(Some(message))
-            },
+            }
             // Plate
             0x20 => {
                 let Some((plate, bytes_read)) = (&src[consumed..]).read_str()? else {
@@ -109,7 +115,7 @@ impl Decoder for MessageCodec {
 
                 let message = Message::Plate(Plate { plate, timestamp });
                 Ok(Some(message))
-            },
+            }
             // Ticket
             0x21 => {
                 let Some((plate, bytes_read)) = (&src[consumed..]).read_str()? else {
@@ -150,9 +156,17 @@ impl Decoder for MessageCodec {
                 // commit the read.
                 src.advance(consumed);
 
-                let message = Message::Ticket(Ticket { plate, road, mile1, timestamp2, speed, timestamp1, mile2 });
+                let message = Message::Ticket(Ticket {
+                    plate,
+                    road,
+                    mile1,
+                    timestamp2,
+                    speed,
+                    timestamp1,
+                    mile2,
+                });
                 Ok(Some(message))
-            },
+            }
 
             // WantHeartbeat
             0x40 => {
@@ -166,7 +180,7 @@ impl Decoder for MessageCodec {
 
                 let message = Message::WantHeartbeat(WantHeartbeat { interval });
                 Ok(Some(message))
-            },
+            }
             // Heartbeat
             0x41 => {
                 // commit the read.
@@ -174,7 +188,7 @@ impl Decoder for MessageCodec {
 
                 let message = Message::Heartbeat(Heartbeat);
                 Ok(Some(message))
-            },
+            }
             // IAmCamera
             0x80 => {
                 let Some((road, bytes_read)) = (&src[consumed..]).read_u16()? else {
@@ -195,14 +209,14 @@ impl Decoder for MessageCodec {
 
                 let message = Message::IAmCamera(IAmCamera { road, mile, limit });
                 Ok(Some(message))
-            },
+            }
             // IAmDispatcher
             0x81 => {
                 let Some((num_roads, bytes_read)) = (&src[consumed..]).read_u8()? else {
                     return Ok(None);
                 };
                 consumed += bytes_read;
-                let mut roads: arrayvec::ArrayVec::<u16, 255> = arrayvec::ArrayVec::new();
+                let mut roads: arrayvec::ArrayVec<u16, 255> = arrayvec::ArrayVec::new();
 
                 for _ in 0..(num_roads as usize) {
                     let Some((road, bytes_read)) = (&src[consumed..]).read_u16()? else {
@@ -217,10 +231,8 @@ impl Decoder for MessageCodec {
 
                 let message = Message::IAmDispatcher(IAmDispatcher { num_roads, roads });
                 Ok(Some(message))
-            },
-            unknown => {
-                Err(eyre!("Unrecognized message type header: {unknown:#04X}"))
             }
+            unknown => Err(eyre!("Unrecognized message type header: {unknown:#04X}")),
         }
     }
 }
@@ -233,14 +245,13 @@ pub trait ReadFull {
     fn read_u32(&self) -> Result<Option<(u32, usize)>, Self::Error>;
 }
 
-impl<B> ReadFull for B 
+impl<B> ReadFull for B
 where
-    B: tokio_util::bytes::Buf + Clone
+    B: tokio_util::bytes::Buf + Clone,
 {
     type Error = eyre::Error;
 
     fn read_str(&self) -> Result<Option<(ArrayString<255>, usize)>, Self::Error> {
-
         // Currently Buf doesn't provide a way to
         // peek at a few bytes (i.e. without advancing internal cursor)
         // so we clone to prevent advancing our cursor until we really need to.
@@ -261,7 +272,7 @@ where
             }
             s.push(temp.get_u8());
         }
-    
+
         // Now we have enough bytes to read the complete string.
         let s = unsafe { from_utf8_unchecked(&s) };
         let data = ArrayString::from_str(s)?;
@@ -313,9 +324,9 @@ pub trait PutStr {
     fn put_str(&mut self, s: &arrayvec::ArrayString<255>) -> fmt::Result;
 }
 
-impl<B> PutStr for B 
+impl<B> PutStr for B
 where
-    B: tokio_util::bytes::BufMut
+    B: tokio_util::bytes::BufMut,
 {
     fn put_str(&mut self, s: &arrayvec::ArrayString<255>) -> fmt::Result {
         if self.remaining_mut() >= (s.len() + 1) {
@@ -328,12 +339,10 @@ where
     }
 }
 
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Error {
     pub message: String,
 }
-
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Plate {
@@ -349,12 +358,12 @@ pub struct Ticket {
     pub timestamp1: u32,
     pub mile2: u16,
     pub timestamp2: u32,
-    pub speed: u16
+    pub speed: u16,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct WantHeartbeat {
-    pub interval: u32
+    pub interval: u32,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -364,16 +373,14 @@ pub struct Heartbeat;
 pub struct IAmCamera {
     pub road: u16,
     pub mile: u16,
-    pub limit: u16
+    pub limit: u16,
 }
-
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IAmDispatcher {
     pub num_roads: u8,
-    pub roads: arrayvec::ArrayVec<u16, 255>
+    pub roads: arrayvec::ArrayVec<u16, 255>,
 }
-
 
 #[derive(Debug, PartialEq, Eq)]
 #[allow(clippy::large_enum_variant)]
@@ -384,19 +391,16 @@ pub enum Message {
     WantHeartbeat(WantHeartbeat),
     Heartbeat(Heartbeat),
     IAmCamera(IAmCamera),
-    IAmDispatcher(IAmDispatcher)
+    IAmDispatcher(IAmDispatcher),
 }
-
-
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use arrayvec::ArrayVec;
-    use tokio_util::codec::{FramedRead, FramedWrite};
     use futures_util::{SinkExt, StreamExt};
     use test_case::test_case;
-
+    use tokio_util::codec::{FramedRead, FramedWrite};
 
     #[test_case(
         Message::Error(Error { message: "aab".try_into().unwrap() }), 
@@ -466,7 +470,10 @@ mod tests {
     #[tokio::test]
     async fn test_encode_stream() {
         let messages = vec![
-            Message::Plate(Plate { plate: String::from("abc").unwrap(), timestamp: 10 }),
+            Message::Plate(Plate {
+                plate: String::from("abc").unwrap(),
+                timestamp: 10,
+            }),
             Message::WantHeartbeat(WantHeartbeat { interval: 12 }),
         ];
         let mut framed_write = FramedWrite::new(Vec::new(), MessageCodec);
@@ -477,36 +484,23 @@ mod tests {
 
         let dest = framed_write.into_inner();
         assert_eq!(
-            &dest, 
+            &dest,
             &[
                 // Message beings
                 // ---- Message is a Plate!
-                0x20, 
-                // ------ plate has 3 chars: "abc"
-                0x03, 
-                0x61,
-                0x62,
-                0x63,
-                // ------ timestamp = 10 (4 bytes)
-                0x00, 
-                0x00, 
-                0x00, 
-                0x0A,
+                0x20, // ------ plate has 3 chars: "abc"
+                0x03, 0x61, 0x62, 0x63, // ------ timestamp = 10 (4 bytes)
+                0x00, 0x00, 0x00, 0x0A,
                 // End of Message: Plate { plate: "abc", timestamp: 10 }
 
                 // Message beings
                 // ---- Message is a WantHeartbeat!
-                0x40,
-                // ------ interval = 12 (4 bytes)
-                0x00,
-                0x00,
-                0x00,
-                0x0C,
+                0x40, // ------ interval = 12 (4 bytes)
+                0x00, 0x00, 0x00, 0x0C,
                 // End of Message: WantHeartbeat { interval: 12 }
             ]
         );
     }
-
 
     #[test_case(
         vec![0x10, 0x03, 0x61, 0x61, 0x62],
@@ -572,11 +566,11 @@ mod tests {
         assert!(framed_read.next().await.is_none());
     }
 
-
     #[test]
     fn test_put_str() {
         let mut data = tokio_util::bytes::BytesMut::new();
-        data.put_str(&("abc".try_into().unwrap())).expect("put_str works");
+        data.put_str(&("abc".try_into().unwrap()))
+            .expect("put_str works");
         assert_eq!(data.to_vec(), vec![0x03, 0x61, 0x62, 0x63]);
     }
 
@@ -659,10 +653,8 @@ mod tests {
         let mut framed_read = FramedRead::new(cursor, MessageCodec);
         // let variant_name = std::any::type_name_of_val(&expected).to_string();
         let variant_name = format!("{:?}", expected);
-        _ = framed_read
-            .next()
-            .await
-            .unwrap()
-            .expect_err(format!("should fail to decode partial contents as {}", variant_name).as_str());
+        _ = framed_read.next().await.unwrap().expect_err(
+            format!("should fail to decode partial contents as {}", variant_name).as_str(),
+        );
     }
 }
